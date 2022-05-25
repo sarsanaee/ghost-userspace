@@ -40,6 +40,7 @@ from experiments.scripts.options import GhostOptions
 from experiments.scripts.options import Paths
 from experiments.scripts.options import RocksDBOptions
 from experiments.scripts.setup import SetUp
+from experiments.scripts.options import Policy
 
 
 @dataclass
@@ -265,7 +266,26 @@ def GhostArgs(experiment: Experiment):
   if not experiment.ghost:
     raise ValueError("ghOSt has not been configured.")
 
-  return [experiment.binaries.ghost] + DataClassToArgs(experiment.ghost)
+
+  if experiment.ghost.policy == Policy.SHINJUKU:
+    arguments = DataClassToArgs(experiment.ghost)
+    arguments.pop()
+    arguments.pop()
+    return [experiment.binaries.ghost] + arguments
+  elif experiment.ghost.policy == Policy.FIFO_CENTRALIZED or \
+        experiment.ghost.policy == Policy.SOL:
+    f_cpu = experiment.ghost.firstcpu
+    command = [experiment.binaries.ghost] + ["--ghost_cpus", str(f_cpu) + "-" +
+            str(f_cpu + experiment.ghost.ncpus)] 
+    return command
+  elif experiment.ghost.policy == Policy.FIFO_PER_CORE:
+    f_cpu = experiment.ghost.firstcpu
+    command = [experiment.binaries.ghost] + ["--ncpus", str(f_cpu +
+        experiment.ghost.ncpus)] 
+    return command
+
+  else:
+    raise ValueError("Unknown policy")
 
 
 def StartApp(args: List[str], cgroup: str):
@@ -520,7 +540,8 @@ def Run(experiment: Experiment):
   else:
     print("Running CFS experiments...")
 
-  SetUp(experiment.binaries)
+  SetUp(experiment.binaries, experiment.ghost.policy)
+
   if not CheckBinaries(experiment):
     raise ValueError("One or more of the binaries does not exist.")
   SetUpOutputDirectory(experiment)

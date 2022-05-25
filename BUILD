@@ -338,6 +338,7 @@ cc_binary(
         "schedulers/fifo/per_cpu/fifo_agent.cc",
     ],
     copts = compiler_flags,
+    visibility = ["//experiments/scripts:__pkg__"],
     deps = [
         ":agent",
         ":fifo_per_cpu_scheduler",
@@ -367,6 +368,7 @@ cc_binary(
         "schedulers/fifo/centralized/fifo_agent.cc",
     ],
     copts = compiler_flags,
+    visibility = ["//experiments/scripts:__pkg__"],
     deps = [
         ":agent",
         ":fifo_centralized_scheduler",

@@ -27,6 +27,7 @@ import tempfile
 import zipfile
 from experiments.scripts.options import Paths
 from experiments.scripts.options import TMPFS_MOUNT
+from experiments.scripts.options import Policy
 
 
 def DisableCStates():
@@ -123,8 +124,7 @@ def UnzipPar():
     zf.extractall(path)
   return tmp
 
-
-def CopyBinaries(paths: Paths):
+def CopyBinaries(paths: Paths, policy: str):
   """Copies RocksDB, Antagonist, and ghOSt binaries to external paths.
 
   The RocksDB, Antagonist, and ghOSt binaries are included as data dependencies
@@ -137,12 +137,26 @@ def CopyBinaries(paths: Paths):
   tmp = UnzipPar()
   CopyBinary(tmp.name + "/com_google_ghost/rocksdb", paths.rocksdb)
   CopyBinary(tmp.name + "/com_google_ghost/antagonist", paths.antagonist)
-  CopyBinary(tmp.name + "/com_google_ghost/agent_shinjuku", paths.ghost)
+
+  # picking a right binary
+  if policy:
+    if policy == Policy.SHINJUKU:
+      CopyBinary(tmp.name + "/com_google_ghost/agent_shinjuku", paths.ghost)
+    elif policy == Policy.FIFO_CENTRALIZED:
+      CopyBinary(tmp.name + "/com_google_ghost/fifo_centralized_agent", paths.ghost)
+    elif policy == Policy.FIFO_PER_CORE:
+      CopyBinary(tmp.name + "/com_google_ghost/fifo_per_cpu_agent", paths.ghost)
+    else:
+      raise ValueError("Unknown policy {policy}.")
+
+
+
   tmp.cleanup()
 
 
 # TODO: Disable MSV fixing.
-def SetUp(binaries: Paths):
+def SetUp(binaries: Paths, policy: str):
+
   """Set up the machine for the experiments.
 
   This includes disabling C-states, disabling profiling, mounting a tmpfs
@@ -155,4 +169,4 @@ def SetUp(binaries: Paths):
   DisableCStates()
   MountTmpfs()
   MountCgroups()
-  CopyBinaries(binaries)
+  CopyBinaries(binaries, policy)
