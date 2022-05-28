@@ -144,6 +144,10 @@ class Orchestrator {
     // For the ghOSt experiments, this is the QoS (Quality-of-Service) class
     // for the PrioTable work class that all worker sched items are added to.
     uint32_t ghost_qos;
+
+    // This parameter is related to implementation of Darc algorithm.
+    bool custom_distribution; 
+
   };
 
   // Threads use this type to pass requests to each other. In the CFS (Linux
@@ -198,6 +202,7 @@ class Orchestrator {
   // identifier for the load generator thread.
   virtual void LoadGenerator(uint32_t sid) = 0;
 
+
   // This method is executed in a loop by the dispatcher thread, if one exists.
   // If so, this method receives requests from the load generator and assigns
   // them to workers. 'sid' is the sched item identifier for the dispatcher
@@ -235,6 +240,26 @@ class Orchestrator {
   }
 
   std::vector<std::vector<Request>>& requests() { return requests_; }
+
+  void calculate_moving_avg(uint32_t sid, uint32_t request_type) {
+    static size_t window_size = 20; // For now I pick a static value.
+    size_t size = requests_.size();
+    double moving_avg_service_time = 0.0;
+    
+    absl::Duration agg_delay = absl::ZeroDuration();
+
+    for (int i = 0; i < window_size; i++) {
+      Request r = requests()[sid][size - window_size + i];
+      absl::Duration delay = r.request_finished - r.request_start;
+      agg_delay = agg_delay + delay;
+    }
+
+    moving_avg_service_time = absl::ToDoubleMicroseconds(agg_delay) / window_size;
+
+    recent_worker_sam_[sid] = moving_avg_service_time;
+  }
+
+
 
   std::vector<absl::BitGen>& gen() { return gen_; }
 
@@ -302,6 +327,10 @@ class Orchestrator {
 
   // The requests processed to completion by workers.
   std::vector<std::vector<Request>> requests_;
+
+  // This parameter is related to Darc implementation.
+  std::vector<double> recent_worker_sam_;
+
 
   // Random bit generators. Each thread has its own bit generator since the bit
   // generators are not thread safe.

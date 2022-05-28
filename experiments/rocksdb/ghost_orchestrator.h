@@ -49,13 +49,20 @@ class GhostOrchestrator final : public Orchestrator {
   // For ghOSt, the load generator passes requests to workers and marks the
   // workers runnable in the ghOSt PrioTable.
   void LoadGenerator(uint32_t sid) final;
+ 
+  // This method is executed in a loop by the load generator thread. This method
+  // checks the ingress queue for pending requests. 'sid' is the sched item
+  // identifier for the load generator thread.
+  void DarcLoadGenerator(uint32_t sid);
+  
 
   // There is no dispatcher thread as the ghOSt global agent has that role.
   // Thus, this method is a no-op. Calling this method will trigger a
   // 'CHECK(false)'.
   void Dispatcher(uint32_t sid) final {
     // No-op.
-    CHECK(false);
+    // CHECK(false);
+    // Here we should tell which thread should we pick!
   }
 
   void Worker(uint32_t sid) final;
@@ -115,6 +122,24 @@ class GhostOrchestrator final : public Orchestrator {
   // repeatedly allocating memory for the list backing in the load generator
   // common case, which is expensive.
   std::list<uint32_t> idle_sids_;
+
+  // This map maintains infomration about available works of a request type
+  // I'm not sure if maps is the best data structure but let's go with this
+  // for now.
+  // std::map<uint32_t, std::vector<uint32_t>> request_type_workers;
+  bool DarcOn;
+  struct DarcSched {
+    std::vector<std::pair<uint32_t, std::vector<uint32_t>>> request_type_workers;
+    std::vector<uint32_t> service_times;
+    std::vector<uint32_t> occarance;
+    std::vector<uint32_t> avg_service_time; // occarance * service times
+
+    int request_tracker;
+    int num_request_types;
+    uint32_t total_avg_service_time;
+  } DarcSchedData;
+
+
 };
 
 }  // namespace ghost_test

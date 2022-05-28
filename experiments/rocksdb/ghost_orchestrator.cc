@@ -81,6 +81,30 @@ GhostOrchestrator::GhostOrchestrator(Orchestrator::Options opts)
   // than ghOSt. While the sched with SID 0 is unused, workers are able to
   // access their own sched item by passing their SID directly rather than
   // having to subtract 1 from their SID.
+
+
+  // TODO: Darc is off by default. It needs a parameter in rocksdb as well.
+  if (DarcOn) {
+    // Let's initialize the Darc data structures.
+    // These values has to be received from the commandline parameters.
+    // TODO: I leave them as static values just for the sake of testing.
+    DarcSchedData.num_request_types = 2;
+    DarcSchedData.service_times = {1, 100};
+    DarcSchedData.occarance = {0, 0};
+    DarcSchedData.avg_service_time = {0, 0};
+    DarcSchedData.request_tracker = 0;
+
+
+    //  I only allow 1 thread per request type for now
+    uint32_t thread_id = 0;
+    for(size_t i = 0; i < DarcSchedData.num_request_types; i++) {
+      std::vector<uint32_t> valid_workers = {thread_id};
+      DarcSchedData.request_type_workers.push_back({i, valid_workers});
+      thread_id++;
+    }
+  }
+
+
   if (UsesPrioTable()) {
     prio_table_helper_ = std::make_unique<PrioTableHelper>(
         /*num_sched_items=*/total_threads(), /*num_work_classes=*/1);
@@ -162,6 +186,83 @@ void GhostOrchestrator::GetIdleWorkerSIDs() {
   }
 }
 
+
+void GhostOrchestrator::DarcLoadGenerator(uint32_t sid) {
+  if (!first_run().Triggered(sid)) {
+    CHECK(first_run().Trigger(sid));
+    CHECK_EQ(ghost::Ghost::SchedSetAffinity(
+                 ghost::Gtid::Current(),
+                 ghost::MachineTopology()->ToCpuList(
+                     std::vector<int>{options().load_generator_cpu})),
+             0);
+    // Use 'printf' instead of 'std::cout' so that the print contents do not get
+    // interleaved with the dispatcher's and the workers' print contents.
+    printf("Load generator (SID %u, TID: %ld, affined to CPU %u)\n", sid,
+           syscall(SYS_gettid), options().load_generator_cpu);
+    threads_ready_.WaitForNotification();
+    set_start(absl::Now());
+    network().Start();
+  }
+
+  GetIdleWorkerSIDs();
+
+  uint32_t size = idle_sids_.size();
+  for (uint32_t i = 0; i < size; ++i) {
+
+    uint32_t worker_sid = idle_sids_.front();
+    // We can do a relaxed load rather than an acquire load because
+    // 'GetIdleWorkerSIDs' already did an acquire load for 'num_requests'.
+    CHECK_EQ(
+        worker_work()[worker_sid]->num_requests.load(std::memory_order_relaxed),
+        0);
+
+    // We assign a deadline to the worker just in case we want to run the
+    // experiment with the ghOSt EDF (Earliest-Deadline-First) scheduler. The
+    // deadline is not needed and is ignored for the centralized queuing
+    // scheduler, the Shinjuku scheduler, and the Shenango scheduler.
+    constexpr absl::Duration deadline = absl::Microseconds(100);
+
+    worker_work()[worker_sid]->requests.clear();
+    Request request;
+    for (size_t i = 0; i < options().batch; ++i) {
+      if (network().Poll(request)) {
+        request.request_assigned = absl::Now();
+        worker_work()[worker_sid]->requests.push_back(request);
+      } else {
+        // No more requests waiting in the ingress queue, so give the
+        // requests we have so far to the worker.
+        break;
+      }
+    }
+    if (!worker_work()[worker_sid]->requests.empty()) {
+      // Assign the batch of requests to the next worker
+      idle_sids_.pop_front();
+      CHECK_LE(worker_work()[worker_sid]->requests.size(), options().batch);
+      worker_work()[worker_sid]->num_requests.store(
+          worker_work()[worker_sid]->requests.size(),
+          std::memory_order_release);
+
+      if (UsesPrioTable()) {
+        CHECK(prio_table_helper_->IsIdle(worker_sid));
+        ghost::sched_item si;
+        prio_table_helper_->GetSchedItem(worker_sid, si);
+        si.deadline =
+            PrioTableHelper::ToRawDeadline(ghost::MonotonicNow() + deadline);
+        si.flags |= SCHED_ITEM_RUNNABLE;
+        // All other flags were set in 'InitGhost' and do not need to be
+        // changed.
+        prio_table_helper_->SetSchedItem(worker_sid, si);
+      } else {
+        CHECK(UsesFutex());
+        thread_wait_->MarkRunnable(worker_sid);
+      }
+    } else {
+      // There is no work waiting in the ingress queue.
+      break;
+    }
+  }
+}
+
 void GhostOrchestrator::LoadGenerator(uint32_t sid) {
   if (!first_run().Triggered(sid)) {
     CHECK(first_run().Trigger(sid));
@@ -182,6 +283,7 @@ void GhostOrchestrator::LoadGenerator(uint32_t sid) {
   GetIdleWorkerSIDs();
   uint32_t size = idle_sids_.size();
   for (uint32_t i = 0; i < size; ++i) {
+
     uint32_t worker_sid = idle_sids_.front();
     // We can do a relaxed load rather than an acquire load because
     // 'GetIdleWorkerSIDs' already did an acquire load for 'num_requests'.
@@ -266,6 +368,10 @@ void GhostOrchestrator::Worker(uint32_t sid) {
     request.request_finished = absl::Now();
 
     requests()[sid].push_back(request);
+
+    // rate limiting is required
+    calculate_moving_avg(sid, 2);
+
   }
 
   if (UsesPrioTable()) {

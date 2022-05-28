@@ -99,6 +99,10 @@ ABSL_FLAG(
     "For the ghOSt experiments, this is the QoS (Quality-of-Service) class for "
     "the PrioTable work class that all worker sched items are added to.");
 
+ABSL_FLAG(
+    bool, custom_distribution, false,
+    "This flag is related to Darc implementation");
+
 namespace {
 // Parses all command line flags and returns them as a
 // 'ghost_test::Orchestrator::Options' instance.
@@ -120,6 +124,8 @@ ghost_test::Orchestrator::Options GetOptions() {
   options.load_generator_cpu = absl::GetFlag(FLAGS_load_generator_cpu);
   options.cfs_dispatcher_cpu = absl::GetFlag(FLAGS_cfs_dispatcher_cpu);
   options.num_workers = absl::GetFlag(FLAGS_num_workers);
+  options.custom_distribution = absl::GetFlag(FLAGS_custom_distribution);
+
 
   const std::vector<std::string> worker_cpus = absl::GetFlag(FLAGS_worker_cpus);
   for (const std::string& cpu : worker_cpus) {
