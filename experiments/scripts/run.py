@@ -540,7 +540,7 @@ def Run(experiment: Experiment):
   else:
     print("Running CFS experiments...")
 
-  SetUp(experiment.binaries, experiment.ghost.policy)
+  SetUp(experiment.binaries, experiment.ghost)
 
   if not CheckBinaries(experiment):
     raise ValueError("One or more of the binaries does not exist.")
