@@ -32,12 +32,41 @@ void SyntheticNetwork::Start() {
   start_.Notify();
 }
 
-bool SyntheticNetwork::Poll(Request& request) {
+// bool SyntheticNetwork::Poll(Request& request) {
+//   CHECK(start_.HasBeenNotified());
+
+//   const auto [arrived, arrival_time] = ingress_.HasNewArrival();
+//   if (!arrived) {
+//     return false;
+//   }
+//   // A request is in the ingress queue
+//   absl::Time received = absl::Now();
+//   bool get = absl::Bernoulli(gen_, 1.0 - range_query_ratio_);
+//   if (get) {
+//     // Get request
+//     request.work = Request::Get{
+//         .entry = absl::Uniform<uint32_t>(gen_, 0, Database::kNumEntries)};
+//   } else {
+//     // Range query
+//     request.work = Request::Range{
+//         .start_entry = absl::Uniform<uint32_t>(
+//             gen_, 0, Database::kNumEntries - kRangeQuerySize + 1),
+//         .size = kRangeQuerySize};
+//   }
+//   request.request_generated = arrival_time;
+//   request.request_received = received;
+//   return true;
+// }
+
+// It return a type of a requst!
+int SyntheticNetwork::Poll(Request& request) {
   CHECK(start_.HasBeenNotified());
+  
+  int state = 0;
 
   const auto [arrived, arrival_time] = ingress_.HasNewArrival();
   if (!arrived) {
-    return false;
+    return state;
   }
   // A request is in the ingress queue
   absl::Time received = absl::Now();
@@ -46,16 +75,18 @@ bool SyntheticNetwork::Poll(Request& request) {
     // Get request
     request.work = Request::Get{
         .entry = absl::Uniform<uint32_t>(gen_, 0, Database::kNumEntries)};
+    state = 1;
   } else {
     // Range query
     request.work = Request::Range{
         .start_entry = absl::Uniform<uint32_t>(
             gen_, 0, Database::kNumEntries - kRangeQuerySize + 1),
         .size = kRangeQuerySize};
+    state = 2;
   }
   request.request_generated = arrival_time;
   request.request_received = received;
-  return true;
+  return state;
 }
 
 }  // namespace ghost_test

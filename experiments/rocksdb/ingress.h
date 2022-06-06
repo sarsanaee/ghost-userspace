@@ -153,7 +153,9 @@ class SyntheticNetwork {
   // the request at the front of the queue, if one exists. Returns false if
   // there is no request in the queue; the value at the memory location pointed
   // to by `request` is undefined in this case.
-  bool Poll(Request& request);
+  
+  // bool Poll(Request& request);
+  int Poll(Request& request);
 
   // The size of range queries.
   static constexpr uint32_t kRangeQuerySize = 5000;

@@ -45,10 +45,12 @@ def RunGhostFIFOPerCore():
   # e.throughputs = list(i for i in range(10000, 421000, 10000))
   # Toward the end, run throughputs 430000, 431000, 432000, ..., 460000.
   # e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
-  e.throughputs = [700000]
+  # e.throughputs = [50000, 100000, 200000, 300000, 400000]
+  e.throughputs = [50000]
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
   e.rocksdb.get_exponential_mean = '1us'
   e.rocksdb.ghost_wait_type = GhostWaitType.FUTEX
+  e.rocksdb.range_query_ratio = 0.005
   e.antagonist = None
   e.ghost = GetGhostOptions(_NUM_CPUS)
   e.ghost.policy = Policy.FIFO_PER_CORE
@@ -62,10 +64,11 @@ def RunGhostFIFOCentralized():
   # e.throughputs = list(i for i in range(10000, 421000, 10000))
   # Toward the end, run throughputs 430000, 431000, 432000, ..., 460000.
   # e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
-  e.throughputs = [700000]
+  e.throughputs = [400000]
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
   e.rocksdb.get_exponential_mean = '1us'
   e.rocksdb.ghost_wait_type = GhostWaitType.FUTEX
+  e.rocksdb.range_query_ratio = 0.005
   e.antagonist = None
   e.ghost = GetGhostOptions(_NUM_CPUS)
   e.ghost.policy = Policy.FIFO_CENTRALIZED
