@@ -3,9 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
+# #      http://www.apache.org/licenses/LICENSE-2.0 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -48,6 +46,24 @@ class Scheduler(str, enum.Enum):
   """
   CFS = "cfs"
   GHOST = "ghost"
+
+@enum.unique
+class Policy(str, enum.Enum):
+  """
+  The experiment scheduler.
+
+  FIFO_PER_CORE is a decentralized first-in-first-out per core policy for ghost scheduler 
+  FIFO_CENTRALIZED is a first-in-first-out centeralized policy for ghost scheduler 
+  SOL is a sol~(spead of light) centeralized policy for ghost scheduler 
+  SHINJUKU is a shinjuku centeralized policy for ghost scheduler 
+
+  """
+
+  FIFO_PER_CORE = "fifo-per-core"
+  FIFO_CENTRALIZED = "fifo-centralized"
+  SOL = "sol"
+  SHINJUKU = "shinjuku"
+
 
 
 def CheckSchedulers(schedulers: List[str]) -> bool:
@@ -113,7 +129,7 @@ class Paths:
   """
   rocksdb: str = os.path.join(TMPFS_MOUNT, "rocksdb")
   antagonist: str = os.path.join(TMPFS_MOUNT, "antagonist")
-  ghost: str = os.path.join(TMPFS_MOUNT, "agent_shinjuku")
+  ghost: str = os.path.join(TMPFS_MOUNT, "ghost_agent")
 
 
 def GetDefaultRocksDBWorkerCpus():
@@ -267,6 +283,8 @@ class GhostOptions:
   # infinity. Some scheduling algorithms do not have time-based preemption, so
   # scheduling algorithms that do have it should explicitly turn this on.
   preemption_time_slice: str = "inf"
+  policy: str = Policy.SHINJUKU
+
 
 
 def GetBinaryPaths():

@@ -26,32 +26,33 @@
 extern "C" {
 #endif
 
-#ifndef GHOST_BPF
-// The definitions below are needed when the userspace code is compiled on a
-// machine that is *not* running the ghOSt kernel and therefore does not have
-// the ghOSt declarations below in the bpf.h UAPI header.
-
-// From include/uapi/linux/bpf.h for the ghost kernel.
-
-struct bpf_ghost_sched {};
-
-enum {
-  BPF_PROG_TYPE_GHOST_SCHED = 35,
-  BPF_PROG_TYPE_GHOST_MSG,
-
-  BPF_GHOST_SCHED_SKIP_TICK = 50,
-  BPF_GHOST_SCHED_PNT,
-  BPF_GHOST_MSG_SEND,
-  BPF_GHOST_MAX_ATTACH_TYPE,  // __MAX_BPF_ATTACH_TYPE
-};
+// #ifndef GHOST_BPF
+// // The definitions below are needed when the userspace code is compiled on a
+// // machine that is *not* running the ghOSt kernel and therefore does not have
+// // the ghOSt declarations below in the bpf.h UAPI header.
+// 
+// // From include/uapi/linux/bpf.h for the ghost kernel.
+// 
+// struct bpf_ghost_sched {};
+// 
+// enum {
+//   BPF_PROG_TYPE_GHOST_SCHED = 35,
+//   BPF_PROG_TYPE_GHOST_MSG,
+// 
+//   BPF_GHOST_SCHED_SKIP_TICK = 50,
+//   BPF_GHOST_SCHED_PNT,
+//   BPF_GHOST_MSG_SEND,
+//   BPF_GHOST_MAX_ATTACH_TYPE,  // __MAX_BPF_ATTACH_TYPE
+// };
 
 // end include/uapi/linux/bpf.h
 
-#else
+// #else
 
 #define BPF_GHOST_SCHED_MAX_ATTACH_TYPE __MAX_BPF_ATTACH_TYPE
+#define BPF_GHOST_MAX_ATTACH_TYPE  __MAX_BPF_ATTACH_TYPE
 
-#endif
+// #endif
 
 // Generic BPF helpers
 

@@ -20,8 +20,25 @@ py_library(
         "//:agent_shinjuku",
         "//:antagonist",
         "//:rocksdb",
+        "//:fifo_centralized_agent",
+        "//:fifo_per_cpu_agent",
     ],
 )
+
+# Runs the fifo centralized queuing experiments.
+par_binary(
+    name = "fifo_queuing",
+    srcs = [
+        "fifo_queuing.py",
+    ],
+    python_version = "PY3",
+    deps = [
+        ":experiments",
+        requirement("absl-py"),
+    ],
+)
+
+
 
 # Runs the centralized queuing experiments.
 par_binary(

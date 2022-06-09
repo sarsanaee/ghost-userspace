@@ -156,6 +156,7 @@ void GhostOrchestrator::GetIdleWorkerSIDs() {
     uint32_t worker_sid = i + 1;
     if (worker_work()[worker_sid]->num_requests.load(
             std::memory_order_acquire) == 0 &&
+        // !SkipIdleWorker(worker_sid) && (i == 1 || i == 2)) {
         !SkipIdleWorker(worker_sid)) {
       idle_sids_.push_back(worker_sid);
     }
@@ -198,10 +199,19 @@ void GhostOrchestrator::LoadGenerator(uint32_t sid) {
     worker_work()[worker_sid]->requests.clear();
     Request request;
     for (size_t i = 0; i < options().batch; ++i) {
-      if (network().Poll(request)) {
+      // if (network().Poll(request) == 1 && worker_sid == 1) {
+      //   request.request_assigned = absl::Now();
+      //   worker_work()[worker_sid]->requests.push_back(request);
+      // } 
+      // else if (network().Poll(request) == 2 && worker_sid > 1 && worker_sid < options().num_workers) {
+      //   request.request_assigned = absl::Now();
+      //   worker_work()[worker_sid]->requests.push_back(request);
+      // }
+      if (network().Poll(request) == 1 || network().Poll(request) == 2) {
         request.request_assigned = absl::Now();
         worker_work()[worker_sid]->requests.push_back(request);
-      } else {
+      } 
+      else {
         // No more requests waiting in the ingress queue, so give the
         // requests we have so far to the worker.
         break;
