@@ -36,6 +36,7 @@ void PrioTableHelper::CopySchedItem(ghost::sched_item& dst,
   dst.gpid = src.gpid;
   dst.flags = src.flags;
   dst.deadline = src.deadline;
+  dst.s_class = src.s_class; // darc
 }
 
 void PrioTableHelper::GetSchedItem(uint32_t sid, ghost::sched_item& si) const {

@@ -20,6 +20,7 @@ py_library(
         "//:agent_shinjuku",
         "//:antagonist",
         "//:rocksdb",
+        "//:fifo_centralized_shared_agent",
         "//:fifo_centralized_agent",
         "//:fifo_per_cpu_agent",
     ],

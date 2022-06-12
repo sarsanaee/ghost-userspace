@@ -394,6 +394,40 @@ cc_library(
     ],
 )
 
+cc_binary(
+    name = "fifo_centralized_shared_agent",
+    srcs = [
+        "schedulers/fifo/centralized_shared/fifo_agent.cc",
+    ],
+    copts = compiler_flags,
+    visibility = ["//experiments/scripts:__pkg__"],
+    deps = [
+        ":agent",
+        ":fifo_centralized_shared_scheduler",
+        "@com_google_absl//absl/debugging:symbolize",
+        "@com_google_absl//absl/flags:parse",
+    ],
+)
+
+cc_library(
+    name = "fifo_centralized_shared_scheduler",
+    srcs = [
+        "schedulers/fifo/centralized_shared/fifo_orchestrator.cc",
+        "schedulers/fifo/centralized_shared/fifo_scheduler.cc",
+    ],
+    hdrs = [
+        "schedulers/fifo/centralized_shared/fifo_orchestrator.h",
+        "schedulers/fifo/centralized_shared/fifo_scheduler.h",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":agent",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:bind_front",
+    ],
+)
 cc_library(
     name = "ghost",
     srcs = [

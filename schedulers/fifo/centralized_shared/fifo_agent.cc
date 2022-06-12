@@ -24,7 +24,7 @@
 #include "lib/channel.h"
 #include "lib/enclave.h"
 #include "lib/topology.h"
-#include "schedulers/fifo/centralized/fifo_scheduler.h"
+#include "schedulers/fifo/centralized_shared/fifo_scheduler.h"
 
 ABSL_FLAG(std::string, ghost_cpus, "1-5", "cpulist");
 ABSL_FLAG(int32_t, globalcpu, -1,
@@ -61,6 +61,8 @@ int main(int argc, char* argv[]) {
   ghost::FifoConfig config;
   ghost::ParseFifoConfig(&config);
 
+  ghost::set_verbose(2);
+ 
   printf("Core map\n");
 
   int n = 0;
@@ -103,7 +105,7 @@ int main(int argc, char* argv[]) {
   // TODO: this is racy - uap could be deleted already
   ghost::GhostSignals::AddHandler(SIGUSR1, [uap](int) {
     uap->Rpc(ghost::FifoScheduler::kDebugRunqueue);
-    return false;
+    return true;
   });
 
   exit.WaitForNotification();

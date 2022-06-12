@@ -33,10 +33,29 @@ from experiments.scripts.options import GhostWaitType
 from experiments.scripts.run import Experiment
 from experiments.scripts.run import Run
 
-_NUM_CPUS = 18
+_NUM_CPUS = 4 
 _NUM_CFS_WORKERS = _NUM_CPUS - 2
-_NUM_GHOST_WORKERS = 18 
+_NUM_GHOST_WORKERS = 4 
 
+
+def RunGhostFIFOCentralizedSharedMem():
+  """Runs the ghOSt experiment."""
+  e: Experiment = Experiment()
+  # Run throughputs 10000, 20000, 30000, ..., 420000.
+  # e.throughputs = list(i for i in range(10000, 421000, 10000))
+  # Toward the end, run throughputs 430000, 431000, 432000, ..., 460000.
+  # e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
+  e.throughputs = [100000]
+  e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
+  e.rocksdb.get_exponential_mean = '1us'
+  e.rocksdb.ghost_wait_type = GhostWaitType.PRIO_TABLE
+  # e.rocksdb.ghost_wait_type = GhostWaitType.FUTEX
+  e.rocksdb.range_query_ratio = 0.001
+  e.antagonist = None
+  e.ghost = GetGhostOptions(_NUM_CPUS)
+  e.ghost.policy = Policy.FIFO_CENTRALIZED_SHARED
+
+  Run(e)
 
 def RunGhostFIFOPerCore():
   """Runs the ghOSt experiment."""
@@ -64,11 +83,11 @@ def RunGhostFIFOCentralized():
   # e.throughputs = list(i for i in range(10000, 421000, 10000))
   # Toward the end, run throughputs 430000, 431000, 432000, ..., 460000.
   # e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
-  e.throughputs = [400000]
+  e.throughputs = [100000]
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
   e.rocksdb.get_exponential_mean = '1us'
   e.rocksdb.ghost_wait_type = GhostWaitType.FUTEX
-  e.rocksdb.range_query_ratio = 0.005
+  e.rocksdb.range_query_ratio = 0.001
   e.antagonist = None
   e.ghost = GetGhostOptions(_NUM_CPUS)
   e.ghost.policy = Policy.FIFO_CENTRALIZED
@@ -81,7 +100,8 @@ def main(argv: Sequence[str]):
   elif len(argv) == 2:
     raise app.UsageError(
         'No experiment specified. Pass `ghost` for the scheduler and\
-        `fifo-centralized` and/or `fifo-per-core` for the ghost policy as\
+        `fifo-centralized` and/or `fifo-centralized-shared` and/or \
+        `fifo-per-core` for the ghost policy as\
         arguments')
 
   # Run the experiments.
@@ -95,13 +115,13 @@ def main(argv: Sequence[str]):
     if scheduler != Scheduler.GHOST:
       raise ValueError(f'Unknown scheduler {scheduler}.')
 
-    # It is a ghost scheduler
-    # check the policies.
+    # It is a ghost scheduler now check the policies.
     if policy == Policy.FIFO_CENTRALIZED:
       RunGhostFIFOCentralized()
-    # check the policies.
     elif policy == Policy.FIFO_PER_CORE:
       RunGhostFIFOPerCore()
+    elif policy == Policy.FIFO_CENTRALIZED_SHARED:
+      RunGhostFIFOCentralizedSharedMem()
     else:
       raise ValueError(f'Unknown policy {policy}.')
 

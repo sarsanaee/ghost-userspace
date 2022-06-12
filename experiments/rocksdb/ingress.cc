@@ -59,10 +59,10 @@ void SyntheticNetwork::Start() {
 // }
 
 // It return a type of a requst!
-int SyntheticNetwork::Poll(Request& request) {
+uint32_t SyntheticNetwork::Poll(Request& request) {
   CHECK(start_.HasBeenNotified());
   
-  int state = 0;
+  uint32_t state = 0;
 
   const auto [arrived, arrival_time] = ingress_.HasNewArrival();
   if (!arrived) {

@@ -149,6 +149,8 @@ def CopyBinaries(paths: Paths, go: GhostOptions):
       CopyBinary(tmp.name + "/com_google_ghost/fifo_centralized_agent", paths.ghost)
     elif policy == Policy.FIFO_PER_CORE:
       CopyBinary(tmp.name + "/com_google_ghost/fifo_per_cpu_agent", paths.ghost)
+    elif policy == Policy.FIFO_CENTRALIZED_SHARED:
+      CopyBinary(tmp.name + "/com_google_ghost/fifo_centralized_shared_agent", paths.ghost)
     else:
       raise ValueError("Unknown policy {policy}.")
   else:

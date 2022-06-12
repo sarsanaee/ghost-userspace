@@ -20,9 +20,14 @@
 #include <cstdint>
 #include <map>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/functional/bind_front.h"
 #include "absl/time/time.h"
 #include "lib/agent.h"
 #include "lib/scheduler.h"
+
+#include "schedulers/fifo/centralized_shared/fifo_orchestrator.h"
+#include "shared/prio_table.h"
 
 namespace ghost {
 
@@ -74,6 +79,14 @@ struct FifoTask : public Task<> {
 
   RunState run_state = RunState::kBlocked;
   Cpu cpu{Cpu::UninitializedType::kUninitialized};
+
+  // Fifo orchestrator pointer for the task
+  std::shared_ptr<FifoOrchestrator> orch;
+
+  // to be filled from the PrioTable
+  const FifoSchedParams* sp = nullptr;
+
+  bool has_work = false;
 
   // Whether the last execution was preempted or not.
   bool preempted = false;
@@ -135,6 +148,16 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
   bool PickNextGlobalCPU(StatusWord::BarrierToken agent_barrier,
                          const Cpu& this_cpu);
 
+  // Handles a new process that has at least one of its threads enter the ghOSt
+  // scheduling class (e.g., via sched_setscheduler()).
+  void HandleNewGtid(FifoTask* task, pid_t tgid);
+
+  // Callback when a sched item is updated.
+  void SchedParamsCallback(FifoOrchestrator& orch,
+                           const FifoSchedParams* sp, Gtid oldgtid);
+
+  void UpdateSchedParams();
+
   // Print debug details about the current tasks managed by the global agent,
   // CPU state, and runqueue stats.
   void DumpState(const Cpu& cpu, int flags);
@@ -185,6 +208,10 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
   std::atomic<int32_t> global_cpu_;
   LocalChannel global_channel_;
   int num_tasks_ = 0;
+
+  absl::flat_hash_map<pid_t, std::shared_ptr<FifoOrchestrator>> orchs_;
+  const FifoOrchestrator::SchedCallbackFunc kSchedCallbackFunc =
+      absl::bind_front(&FifoScheduler::SchedParamsCallback, this);
 
   std::deque<FifoTask*> run_queue_;
   std::vector<FifoTask*> yielding_tasks_;

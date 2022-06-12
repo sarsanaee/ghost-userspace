@@ -69,6 +69,7 @@ void GhostOrchestrator::InitPrioTable() {
     si.gpid = gtids[i].id();
     si.flags = 0;
     si.deadline = 0;
+    si.s_class = 0; // Darc
     prio_table_helper_->SetSchedItem(/*sid=*/i, si);
   }
 }
@@ -198,6 +199,10 @@ void GhostOrchestrator::LoadGenerator(uint32_t sid) {
 
     worker_work()[worker_sid]->requests.clear();
     Request request;
+
+    // Alireza: This doesn't work for batch sizes more than 1
+    uint32_t type;
+
     for (size_t i = 0; i < options().batch; ++i) {
       // if (network().Poll(request) == 1 && worker_sid == 1) {
       //   request.request_assigned = absl::Now();
@@ -207,7 +212,8 @@ void GhostOrchestrator::LoadGenerator(uint32_t sid) {
       //   request.request_assigned = absl::Now();
       //   worker_work()[worker_sid]->requests.push_back(request);
       // }
-      if (network().Poll(request) == 1 || network().Poll(request) == 2) {
+      type = network().Poll(request);
+      if (type > 0) {
         request.request_assigned = absl::Now();
         worker_work()[worker_sid]->requests.push_back(request);
       } 
@@ -217,6 +223,7 @@ void GhostOrchestrator::LoadGenerator(uint32_t sid) {
         break;
       }
     }
+
     if (!worker_work()[worker_sid]->requests.empty()) {
       // Assign the batch of requests to the next worker
       idle_sids_.pop_front();
@@ -229,9 +236,10 @@ void GhostOrchestrator::LoadGenerator(uint32_t sid) {
         CHECK(prio_table_helper_->IsIdle(worker_sid));
         ghost::sched_item si;
         prio_table_helper_->GetSchedItem(worker_sid, si);
-        si.deadline =
-            PrioTableHelper::ToRawDeadline(ghost::MonotonicNow() + deadline);
+        si.deadline = 12143124253;/// PrioTableHelper::ToRawDeadline(absl::Time(0)); 
+            // PrioTableHelper::ToRawDeadline(ghost::MonotonicNow() + deadline);
         si.flags |= SCHED_ITEM_RUNNABLE;
+        si.s_class = type; // darc class
         // All other flags were set in 'InitGhost' and do not need to be
         // changed.
         prio_table_helper_->SetSchedItem(worker_sid, si);

@@ -60,6 +60,7 @@ struct sched_item {
   uint32_t flags; /* schedulable attributes */
   seqcount_t seqcount;
   uint64_t deadline; /* deadline in ns (relative to the Unix epoch) */
+  uint32_t s_class; /* darc class */
 } ABSL_CACHELINE_ALIGNED;
 
 /* sched_item.flags */

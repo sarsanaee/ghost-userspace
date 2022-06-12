@@ -46,6 +46,7 @@ class FifoSchedParams {
     return absl::FromUnixNanos(deadline_);
   }
   inline uint32_t GetQoS() const { return qos_; }
+  inline uint32_t GetSclass() const {return s_class_;} // Darc class
 
   // Copy the sched item's options from its 'sched_item' and 'work_class'.
   // Handles the synchronization required to copy the options out.
@@ -67,6 +68,7 @@ class FifoSchedParams {
     uint64_t gpid_l = src->gpid;
     uint32_t flags_l = src->flags;
     uint64_t deadline_l = src->deadline;
+    uint32_t s_class_l = src->s_class;
 
     success = src->seqcount.read_end(begin);
 
@@ -99,6 +101,7 @@ class FifoSchedParams {
     gpid_ = gpid_l;
     flags_ = flags_l;
     deadline_ = deadline_l;
+    s_class_ = s_class_l;
     return true;
   }
 
@@ -109,6 +112,7 @@ class FifoSchedParams {
   uint32_t flags_;     // schedulable attributes
   uint32_t seqcount_;  // last sequence counter seen
   uint64_t deadline_;  // deadline in ns (relative to the Unix epoch)
+  uint32_t s_class_;   // Darc class
   uint32_t qos_;       // work class QoS class
 };
 
@@ -121,7 +125,7 @@ class FifoOrchestrator {
       SchedCallbackFunc;
 
   FifoOrchestrator() : table_() {}
-  FifoOrchestrator(const FifoOrchestrator(&) = delete;
+  FifoOrchestrator(const FifoOrchestrator(&)) = delete;
   FifoOrchestrator operator=(const  FifoOrchestrator&) = delete;
   FifoOrchestrator& operator=(FifoOrchestrator&&) = delete;
   FifoOrchestrator(FifoOrchestrator&&) = delete;

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "schedulers/fifo/centralized/fifo_scheduler.h"
+#include "schedulers/fifo/centralized_shared/fifo_scheduler.h"
 
 #include "absl/strings/str_format.h"
 
@@ -59,17 +59,18 @@ void FifoScheduler::ValidatePreExitState() {
 }
 
 void FifoScheduler::DumpAllTasks() {
-  fprintf(stderr, "task        state       rq_pos  P\n");
+  fprintf(stderr, "task        state       rq_pos  P C\n");
   allocator()->ForEachTask([](Gtid gtid, const FifoTask* task) {
-    absl::FPrintF(stderr, "%-12s%-12s%d\n", gtid.describe(),
+    absl::FPrintF(stderr, "%-12s/%-12s%d/%-12d\n", gtid.describe(),
                   FifoTask::RunStateToString(task->run_state),
-                  task->cpu.valid() ? task->cpu.id() : -1);
+                  task->cpu.valid() ? task->cpu.id() : -1, task->sp ? task->sp->GetSclass() : 0);
     return true;
   });
 }
 
 void FifoScheduler::DumpState(const Cpu& agent_cpu, int flags) {
-  if (flags & kDumpAllTasks) {
+  // if (flags & kDumpAllTasks) {
+  if (true) {
     DumpAllTasks();
   }
 
@@ -100,6 +101,28 @@ FifoScheduler::CpuState* FifoScheduler::cpu_state_of(const FifoTask* task) {
   return cs;
 }
 
+// Map the leader's shared memory region if we haven't already done so.
+void FifoScheduler::HandleNewGtid(FifoTask* task, pid_t tgid) {
+  CHECK_GE(tgid, 0);
+
+  if (orchs_.find(tgid) == orchs_.end()) {
+    auto orch = std::make_shared<FifoOrchestrator>();
+    if (!orch->Init(tgid)) {
+      // If the task's group leader has already exited and closed the PrioTable
+      // fd while we are handling TaskNew, it is possible that we cannot find
+      // the PrioTable.
+      // Just set has_work so that we schedule this task and allow it to exit.
+      // We also need to give it an sp; various places call task->sp->qos_.
+      static FifoSchedParams dummy_sp;
+      task->has_work = true;
+      task->sp = &dummy_sp;
+      return;
+    }
+    auto pair = std::make_pair(tgid, std::move(orch));
+    orchs_.insert(std::move(pair));
+  }
+}
+
 void FifoScheduler::TaskNew(FifoTask* task, const Message& msg) {
   const ghost_msg_payload_task_new* payload =
       static_cast<const ghost_msg_payload_task_new*>(msg.payload());
@@ -108,12 +131,40 @@ void FifoScheduler::TaskNew(FifoTask* task, const Message& msg) {
   task->run_state = FifoTask::RunState::kBlocked;
 
   const Gtid gtid(payload->gtid);
+  
+  // We need parent pid to setup the shared memory for the orchestrator
+  const pid_t tgid = gtid.tgid();
+  HandleNewGtid(task, tgid);
+
   if (payload->runnable) {
     task->run_state = FifoTask::RunState::kRunnable;
     Enqueue(task);
   }
 
   num_tasks_++;
+
+  // Shared memory.
+  auto iter = orchs_.find(tgid);
+  if (iter != orchs_.end()) {
+    task->orch = iter->second;
+  } else {
+    // It's possible to have no orch if the task died and closed its fds before
+    // we found its PrioTable.
+    task->orch = nullptr;
+  }
+
+  fprintf(stderr, "AT ALL\n");
+
+  // Question: in_discovery_ was always false
+  // Get the task's scheduling parameters (potentially updating its position
+  // in the runqueue). TODO: Will do it later. Look at Fifo Scheduler TaskNew
+  task->orch->GetSchedParams(task->gtid, kSchedCallbackFunc);
+}
+
+void FifoScheduler::UpdateSchedParams() {
+  for (auto& scraper : orchs_) {
+    scraper.second->RefreshSchedParams(kSchedCallbackFunc);
+  }
 }
 
 void FifoScheduler::TaskRunnable(FifoTask* task, const Message& msg) {
@@ -246,6 +297,45 @@ void FifoScheduler::TaskOnCpu(FifoTask* task, const Cpu& cpu) {
   task->cpu = cpu;
   task->preempted = false;
   task->prio_boost = false;
+}
+
+
+void FifoScheduler::SchedParamsCallback(FifoOrchestrator& orch,
+                                            const FifoSchedParams* sp,
+                                            Gtid oldgtid) {
+  Gtid gtid = sp->GetGtid();
+
+  // TODO: Get it off cpu if it is running. Assumes that
+  // oldgpid wasn't moved around to a later spot in the PrioTable.
+  // Get it off the runqueue if it is queued.
+  // Implement Scheduler::EraseFromRunqueue(oldgpid);
+  CHECK(!oldgtid || (oldgtid == gtid));
+
+  if (!gtid) {  // empty sched_item.
+    return;
+  }
+
+  FifoTask* task = allocator()->GetTask(gtid);
+  if (!task) {
+    // We are too early (i.e. haven't seen MSG_TASK_NEW for gtid) in which
+    // case ignore the update for now. We'll grab the latest ShinjukuSchedParams
+    // from shmem in the MSG_TASK_NEW handler.
+    //
+    // We are too late (i.e have already seen MSG_TASK_DEAD for gtid) in
+    // which case we just ignore the update.
+    return;
+  }
+
+  // Copy updated params into task->..
+  // const bool had_work = task->has_work;
+  // sp->s_class_ = 12;
+  // sp->SetSclass(12);
+  task->sp = sp;
+  // Not sure if I need these two or not but for now let's leave them here
+  // task->has_work = sp->HasWork();
+  // task->wcid = sp->GetWorkClass();
+
+  return;
 }
 
 void FifoScheduler::GlobalSchedule(const StatusWord& agent_sw,
@@ -457,6 +547,9 @@ void FifoAgent::AgentThread() {
         global_scheduler_->DispatchMessage(msg);
         global_channel.Consume(msg);
       }
+
+      // PrioTable
+      global_scheduler_->UpdateSchedParams();
 
       global_scheduler_->GlobalSchedule(status_word(), agent_barrier);
 

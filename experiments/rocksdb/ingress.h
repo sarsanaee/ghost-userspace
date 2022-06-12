@@ -155,7 +155,7 @@ class SyntheticNetwork {
   // to by `request` is undefined in this case.
   
   // bool Poll(Request& request);
-  int Poll(Request& request);
+  uint32_t Poll(Request& request);
 
   // The size of range queries.
   static constexpr uint32_t kRangeQuerySize = 5000;

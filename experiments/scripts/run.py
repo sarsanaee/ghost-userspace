@@ -273,7 +273,8 @@ def GhostArgs(experiment: Experiment):
     arguments.pop()
     return [experiment.binaries.ghost] + arguments
   elif experiment.ghost.policy == Policy.FIFO_CENTRALIZED or \
-        experiment.ghost.policy == Policy.SOL:
+        experiment.ghost.policy == Policy.SOL or \
+        experiment.ghost.policy == Policy.FIFO_CENTRALIZED_SHARED:
     f_cpu = experiment.ghost.firstcpu
     command = [experiment.binaries.ghost] + ["--ghost_cpus", str(f_cpu) + "-" +
             str(f_cpu + experiment.ghost.ncpus)] 
@@ -283,7 +284,6 @@ def GhostArgs(experiment: Experiment):
     command = [experiment.binaries.ghost] + ["--ncpus", str(f_cpu +
         experiment.ghost.ncpus)] 
     return command
-
   else:
     raise ValueError("Unknown policy")
 

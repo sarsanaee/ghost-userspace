@@ -54,6 +54,7 @@ class Policy(str, enum.Enum):
 
   FIFO_PER_CORE is a decentralized first-in-first-out per core policy for ghost scheduler 
   FIFO_CENTRALIZED is a first-in-first-out centeralized policy for ghost scheduler 
+  FIFO_CENTRALIZED is a first-in-first-out centerazlied policy for ghost scheduler using a shared memory
   SOL is a sol~(spead of light) centeralized policy for ghost scheduler 
   SHINJUKU is a shinjuku centeralized policy for ghost scheduler 
 
@@ -61,6 +62,7 @@ class Policy(str, enum.Enum):
 
   FIFO_PER_CORE = "fifo-per-core"
   FIFO_CENTRALIZED = "fifo-centralized"
+  FIFO_CENTRALIZED_SHARED = 'fifo-centralized-shared'
   SOL = "sol"
   SHINJUKU = "shinjuku"
 
