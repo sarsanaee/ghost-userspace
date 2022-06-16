@@ -87,6 +87,7 @@ struct FifoTask : public Task<> {
   const FifoSchedParams* sp = nullptr;
 
   bool has_work = false;
+  bool s_class = 0;
 
   // Whether the last execution was preempted or not.
   bool preempted = false;

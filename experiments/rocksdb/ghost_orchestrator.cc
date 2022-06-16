@@ -236,8 +236,8 @@ void GhostOrchestrator::LoadGenerator(uint32_t sid) {
         CHECK(prio_table_helper_->IsIdle(worker_sid));
         ghost::sched_item si;
         prio_table_helper_->GetSchedItem(worker_sid, si);
-        si.deadline = 12143124253;/// PrioTableHelper::ToRawDeadline(absl::Time(0)); 
-            // PrioTableHelper::ToRawDeadline(ghost::MonotonicNow() + deadline);
+        si.deadline =  
+            PrioTableHelper::ToRawDeadline(ghost::MonotonicNow() + deadline);
         si.flags |= SCHED_ITEM_RUNNABLE;
         si.s_class = type; // darc class
         // All other flags were set in 'InitGhost' and do not need to be

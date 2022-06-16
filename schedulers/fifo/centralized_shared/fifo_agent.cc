@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
   ghost::FifoConfig config;
   ghost::ParseFifoConfig(&config);
 
-  ghost::set_verbose(2);
+  ghost::set_verbose(1);
  
   printf("Core map\n");
 

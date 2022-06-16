@@ -317,23 +317,23 @@ void FifoScheduler::SchedParamsCallback(FifoOrchestrator& orch,
 
   FifoTask* task = allocator()->GetTask(gtid);
   if (!task) {
-    // We are too early (i.e. haven't seen MSG_TASK_NEW for gtid) in which
-    // case ignore the update for now. We'll grab the latest ShinjukuSchedParams
-    // from shmem in the MSG_TASK_NEW handler.
-    //
-    // We are too late (i.e have already seen MSG_TASK_DEAD for gtid) in
-    // which case we just ignore the update.
     return;
   }
 
   // Copy updated params into task->..
-  // const bool had_work = task->has_work;
+  const bool had_work = task->has_work;
   // sp->s_class_ = 12;
   // sp->SetSclass(12);
   task->sp = sp;
   // Not sure if I need these two or not but for now let's leave them here
-  // task->has_work = sp->HasWork();
+  task->has_work = sp->HasWork();
+  task->s_class = sp->GetSclass();
   // task->wcid = sp->GetWorkClass();
+  
+  // A kBlocked task is not affected by any changes to FifoSchedParams.
+  if (task->blocked()) {
+    return;
+  }
 
   return;
 }
@@ -361,6 +361,9 @@ void FifoScheduler::GlobalSchedule(const StatusWord& agent_sw,
     available.Set(cpu);
   }
 
+  bool flag = false; // This takes cares of a case where we can't find any
+  // workers for a class!
+
   while (!available.Empty()) {
     FifoTask* next = Dequeue();
     if (!next) {
@@ -381,8 +384,49 @@ void FifoScheduler::GlobalSchedule(const StatusWord& agent_sw,
       continue;
     }
 
-    // Assign `next` to run on the CPU at the front of `available`.
-    const Cpu& next_cpu = available.Front();
+
+    bool found = false;
+    Cpu pick_cpu = available.GetNthCpu(0); // Front that I don't like!
+
+    for(int i = 0; i < available.Size(); i++)
+    {
+      pick_cpu = available.GetNthCpu(i);
+      if (pick_cpu.id() ==  next->sp->GetSclass() + global_cpu_.load(std::memory_order_relaxed)) {
+        fprintf(stderr, "######### ever find something %d %d\n", global_cpu_.load(std::memory_order_relaxed), pick_cpu.id());
+        found = true;
+        break;
+      } 
+    }
+
+    if (!found && !flag) {
+      next->run_state = FifoTask::RunState::kRunnable;
+      Enqueue(next);
+      // We can even boot the current task but I guess it will be an finite loop
+      flag = true;
+      continue;
+    } 
+
+    if (flag == true) {
+      // We couldn't find anyone!
+      // We just use some core that are not reserved! For now
+      for(int i = 0; i < available.Size(); i++)
+      {
+        pick_cpu = available.GetNthCpu(i);
+        // if (pick_cpu.id() >  global_cpu_.load(std::memory_order_relaxed) + 2) {
+        if (pick_cpu.id() == 11 ||  pick_cpu.id() == 14) {
+          fprintf(stderr, "$$$$$$$$$ ever find something %d %d\n", global_cpu_.load(std::memory_order_relaxed), pick_cpu.id());
+          break;
+        } 
+      }
+    }
+
+    flag = false;
+
+
+    // Default Ghost Stuff!
+
+    const Cpu& next_cpu = pick_cpu;
+
     CpuState* cs = cpu_state(next_cpu);
     cs->current = next;
     available.Clear(next_cpu);
@@ -537,11 +581,11 @@ void FifoAgent::AgentThread() {
       }
       req->LocalYield(agent_barrier, /*flags=*/0);
     } else {
-      if (boosted_priority() &&
-          global_scheduler_->PickNextGlobalCPU(agent_barrier, cpu())) {
-        continue;
-      }
-
+//      if (boosted_priority() &&
+//          global_scheduler_->PickNextGlobalCPU(agent_barrier, cpu())) {
+//        continue;
+//      }
+//
       Message msg;
       while (!(msg = global_channel.Peek()).empty()) {
         global_scheduler_->DispatchMessage(msg);
