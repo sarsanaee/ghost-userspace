@@ -33,9 +33,9 @@ from experiments.scripts.options import GhostWaitType
 from experiments.scripts.run import Experiment
 from experiments.scripts.run import Run
 
-_NUM_CPUS = 4 
+_NUM_CPUS = 11 
 _NUM_CFS_WORKERS = _NUM_CPUS - 2
-_NUM_GHOST_WORKERS = 4 
+_NUM_GHOST_WORKERS = 20 
 
 
 def RunGhostFIFOCentralizedSharedMem():
@@ -45,12 +45,14 @@ def RunGhostFIFOCentralizedSharedMem():
   # e.throughputs = list(i for i in range(10000, 421000, 10000))
   # Toward the end, run throughputs 430000, 431000, 432000, ..., 460000.
   # e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
-  e.throughputs = [100000]
+  # e.throughputs = [50000, 100000, 200000, 250000, 300000, 350000, 400000, 450000, 500000]
+  e.throughputs = [50000]
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
   e.rocksdb.get_exponential_mean = '1us'
   e.rocksdb.ghost_wait_type = GhostWaitType.PRIO_TABLE
   # e.rocksdb.ghost_wait_type = GhostWaitType.FUTEX
   e.rocksdb.range_query_ratio = 0.001
+  e.rocksdb.range_query_ratio = [0.001, 0.002, 0.004, 0.01, 0.04, 0.08]
   e.antagonist = None
   e.ghost = GetGhostOptions(_NUM_CPUS)
   e.ghost.policy = Policy.FIFO_CENTRALIZED_SHARED
@@ -69,7 +71,7 @@ def RunGhostFIFOPerCore():
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
   e.rocksdb.get_exponential_mean = '1us'
   e.rocksdb.ghost_wait_type = GhostWaitType.FUTEX
-  e.rocksdb.range_query_ratio = 0.005
+  e.rocksdb.range_query_ratio = 0.001
   e.antagonist = None
   e.ghost = GetGhostOptions(_NUM_CPUS)
   e.ghost.policy = Policy.FIFO_PER_CORE
@@ -84,10 +86,14 @@ def RunGhostFIFOCentralized():
   # Toward the end, run throughputs 430000, 431000, 432000, ..., 460000.
   # e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
   e.throughputs = [100000]
+  e.throughputs = [50000, 100000, 200000, 250000, 300000, 350000, 400000, 450000, 500000]
+  e.throughputs = [50000]
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
   e.rocksdb.get_exponential_mean = '1us'
   e.rocksdb.ghost_wait_type = GhostWaitType.FUTEX
-  e.rocksdb.range_query_ratio = 0.001
+  # e.rocksdb.range_query_ratio = 0.001
+  e.rocksdb.range_query_ratio = 0.05
+  # e.rocksdb.range_query_ratio = [0.001, 0.002, 0.004, 0.01, 0.04, 0.08]
   e.antagonist = None
   e.ghost = GetGhostOptions(_NUM_CPUS)
   e.ghost.policy = Policy.FIFO_CENTRALIZED

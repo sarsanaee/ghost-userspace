@@ -516,7 +516,7 @@ def RunExperiment(experiment: Experiment, outputs: OutputFiles,
   HandleOutput(handles, outputs, throughput)
 
 
-def RunAllExperiments(experiment: Experiment, outputs: OutputFiles):
+def RunAllTputExperiments(experiment: Experiment, outputs: OutputFiles):
   """Runs all experiments and writes the results to the output files.
 
   There is one experiment per throughput in `experiment.throughputs`.
@@ -528,6 +528,19 @@ def RunAllExperiments(experiment: Experiment, outputs: OutputFiles):
   for throughput in experiment.throughputs:
     RunExperiment(experiment, outputs, throughput)
 
+def RunAllRangeExperiments(experiment: Experiment, outputs: OutputFiles):
+  """Runs all experiments and writes the results to the output files.
+
+  There is one experiment per percentage or range query ratio in `range_query_ratio`.
+
+  Args:
+    experiment: The experiment.
+    outputs: The output files.
+  """
+  range_query_ratio_list = experiment.rocksdb.range_query_ratio
+  for ratio in range_query_ratio_list:
+    experiment.rocksdb.range_query_ratio = ratio
+    RunExperiment(experiment, outputs, experiment.throughputs[0])
 
 def Run(experiment: Experiment):
   """Run the experiment.
@@ -548,5 +561,8 @@ def Run(experiment: Experiment):
   print(f"Output Directory: {experiment.output_prefix}")
   outputs = OpenOutputFiles(experiment)
   DumpOptions(experiment, outputs)
-  RunAllExperiments(experiment, outputs)
+  if len(experiment.rocksdb.range_query_ratio) > 1:
+    RunAllRangeExperiments(experiment, outputs)
+  else:
+    RunAllTputExperiments(experiment, outputs)
   CloseOutputFiles(outputs)

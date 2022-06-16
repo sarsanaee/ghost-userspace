@@ -69,8 +69,8 @@ void FifoScheduler::DumpAllTasks() {
 }
 
 void FifoScheduler::DumpState(const Cpu& agent_cpu, int flags) {
-  // if (flags & kDumpAllTasks) {
-  if (true) {
+  if (flags & kDumpAllTasks) {
+  // if (true) {
     DumpAllTasks();
   }
 
@@ -153,7 +153,7 @@ void FifoScheduler::TaskNew(FifoTask* task, const Message& msg) {
     task->orch = nullptr;
   }
 
-  fprintf(stderr, "AT ALL\n");
+  // fprintf(stderr, "AT ALL\n");
 
   // Question: in_discovery_ was always false
   // Get the task's scheduling parameters (potentially updating its position
@@ -322,8 +322,6 @@ void FifoScheduler::SchedParamsCallback(FifoOrchestrator& orch,
 
   // Copy updated params into task->..
   const bool had_work = task->has_work;
-  // sp->s_class_ = 12;
-  // sp->SetSclass(12);
   task->sp = sp;
   // Not sure if I need these two or not but for now let's leave them here
   task->has_work = sp->HasWork();
@@ -335,6 +333,27 @@ void FifoScheduler::SchedParamsCallback(FifoOrchestrator& orch,
     return;
   }
 
+  // Case#  had_work  has_work    run_state change
+  //  (a)      0         0        none
+  //  (b)      0         1        kQueued/kOnCPU -> kQueued/kOnCPU (none)
+  //  (c)      1         0        Runnable/kOnCpu -> KQueued Or UnSchedule?
+  //  (d)      1         1        none
+
+  if (task->has_work) {
+    // case b and d
+    CHECK(task->queued() || task->oncpu());
+  }
+
+  if (!task->has_work && had_work) {
+    // case c
+    // why it is on_cpu now?
+    if (task->runnable())
+        Yield(task);
+  }
+
+  // absl::FPrintF(stderr, "%s\n", FifoTask::RunStateToString(task->run_state));
+  
+  // case a none
   return;
 }
 
@@ -361,7 +380,6 @@ void FifoScheduler::GlobalSchedule(const StatusWord& agent_sw,
     available.Set(cpu);
   }
 
-  bool flag = false; // This takes cares of a case where we can't find any
   // workers for a class!
 
   while (!available.Empty()) {
@@ -391,8 +409,8 @@ void FifoScheduler::GlobalSchedule(const StatusWord& agent_sw,
     for(int i = 0; i < available.Size(); i++)
     {
       pick_cpu = available.GetNthCpu(i);
-      if (pick_cpu.id() ==  next->sp->GetSclass() + global_cpu_.load(std::memory_order_relaxed)) {
-        fprintf(stderr, "######### ever find something %d %d\n", global_cpu_.load(std::memory_order_relaxed), pick_cpu.id());
+      if (pick_cpu.id() == next->sp->GetSclass() + global_cpu_.load(std::memory_order_relaxed)) {
+        // fprintf(stderr, "######### ever find something %d %d\n", global_cpu_.load(std::memory_order_relaxed), pick_cpu.id());
         found = true;
         break;
       } 
@@ -405,7 +423,7 @@ void FifoScheduler::GlobalSchedule(const StatusWord& agent_sw,
         pick_cpu = available.GetNthCpu(i);
         // if (pick_cpu.id() >  global_cpu_.load(std::memory_order_relaxed) + 2) {
         if (pick_cpu.id() != next->sp->GetSclass() + global_cpu_.load(std::memory_order_relaxed)) {
-          fprintf(stderr, "$$$$$$$$$ ever find something %d %d\n", global_cpu_.load(std::memory_order_relaxed), pick_cpu.id());
+          // fprintf(stderr, "$$$$$$$$$ ever find something %d %d\n", global_cpu_.load(std::memory_order_relaxed), pick_cpu.id());
           found = true;
           break;
         } 
@@ -417,7 +435,6 @@ void FifoScheduler::GlobalSchedule(const StatusWord& agent_sw,
       next->run_state = FifoTask::RunState::kRunnable;
       Enqueue(next);
       // We can even boot the current task but I guess it will be an finite loop
-      flag = true;
       continue;
     } 
 
@@ -602,7 +619,7 @@ void FifoAgent::AgentThread() {
           global_scheduler_->debug_runqueue_ = false;
           global_scheduler_->DumpState(cpu(), Scheduler::kDumpAllTasks);
         } else {
-          global_scheduler_->DumpState(cpu(), flags);
+          // global_scheduler_->DumpState(cpu(), flags);
         }
       }
     }

@@ -105,7 +105,7 @@ int main(int argc, char* argv[]) {
   // TODO: this is racy - uap could be deleted already
   ghost::GhostSignals::AddHandler(SIGUSR1, [uap](int) {
     uap->Rpc(ghost::FifoScheduler::kDebugRunqueue);
-    return true;
+    return false;
   });
 
   exit.WaitForNotification();
