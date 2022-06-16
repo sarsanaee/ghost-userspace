@@ -398,30 +398,28 @@ void FifoScheduler::GlobalSchedule(const StatusWord& agent_sw,
       } 
     }
 
-    if (!found && !flag) {
+    // If we haven't found any cores! Then we should use spill cores!
+    if (!found) {
+      for(int i = 0; i < available.Size(); i++)
+      {
+        pick_cpu = available.GetNthCpu(i);
+        // if (pick_cpu.id() >  global_cpu_.load(std::memory_order_relaxed) + 2) {
+        if (pick_cpu.id() != next->sp->GetSclass() + global_cpu_.load(std::memory_order_relaxed)) {
+          fprintf(stderr, "$$$$$$$$$ ever find something %d %d\n", global_cpu_.load(std::memory_order_relaxed), pick_cpu.id());
+          found = true;
+          break;
+        } 
+      }
+    }
+
+    if (!found) {
+      // There is no spill cores even, so we should wait
       next->run_state = FifoTask::RunState::kRunnable;
       Enqueue(next);
       // We can even boot the current task but I guess it will be an finite loop
       flag = true;
       continue;
     } 
-
-    if (flag == true) {
-      // We couldn't find anyone!
-      // We just use some core that are not reserved! For now
-      for(int i = 0; i < available.Size(); i++)
-      {
-        pick_cpu = available.GetNthCpu(i);
-        // if (pick_cpu.id() >  global_cpu_.load(std::memory_order_relaxed) + 2) {
-        if (pick_cpu.id() == 11 ||  pick_cpu.id() == 14) {
-          fprintf(stderr, "$$$$$$$$$ ever find something %d %d\n", global_cpu_.load(std::memory_order_relaxed), pick_cpu.id());
-          break;
-        } 
-      }
-    }
-
-    flag = false;
-
 
     // Default Ghost Stuff!
 
