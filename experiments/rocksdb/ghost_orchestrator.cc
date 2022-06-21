@@ -249,6 +249,14 @@ void GhostOrchestrator::LoadGenerator(uint32_t sid) {
 void GhostOrchestrator::Worker(uint32_t sid) {
   if (!first_run().Triggered(sid)) {
     CHECK(first_run().Trigger(sid));
+
+    // Alireza
+    CHECK_EQ(ghost::Ghost::SchedSetAffinity(
+                 ghost::Gtid::Current(),
+                 ghost::MachineTopology()->ToCpuList(
+                     std::vector<int>{options().worker_cpus[sid]})),
+             0);
+
     printf("Worker (SID %u, TID: %ld, not affined to any CPU)\n", sid,
            syscall(SYS_gettid));
 
