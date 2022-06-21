@@ -37,6 +37,7 @@ void GhostOrchestrator::InitThreadPool() {
   CHECK_EQ(kernel_schedulers.size(), thread_work.size());
   // Pass the scheduler types and the thread work to 'Init'.
   thread_pool().Init(kernel_schedulers, thread_work);
+
 }
 
 void GhostOrchestrator::InitPrioTable() {
@@ -81,6 +82,7 @@ GhostOrchestrator::GhostOrchestrator(Orchestrator::Options opts)
   // than ghOSt. While the sched with SID 0 is unused, workers are able to
   // access their own sched item by passing their SID directly rather than
   // having to subtract 1 from their SID.
+  
   if (UsesPrioTable()) {
     prio_table_helper_ = std::make_unique<PrioTableHelper>(
         /*num_sched_items=*/total_threads(), /*num_work_classes=*/1);
@@ -171,6 +173,7 @@ void GhostOrchestrator::LoadGenerator(uint32_t sid) {
                  ghost::MachineTopology()->ToCpuList(
                      std::vector<int>{options().load_generator_cpu})),
              0);
+
     // Use 'printf' instead of 'std::cout' so that the print contents do not get
     // interleaved with the dispatcher's and the workers' print contents.
     printf("Load generator (SID %u, TID: %ld, affined to CPU %u)\n", sid,
@@ -250,14 +253,11 @@ void GhostOrchestrator::Worker(uint32_t sid) {
   if (!first_run().Triggered(sid)) {
     CHECK(first_run().Trigger(sid));
 
-    // Alireza
-    CHECK_EQ(ghost::Ghost::SchedSetAffinity(
-                 ghost::Gtid::Current(),
-                 ghost::MachineTopology()->ToCpuList(
-                     std::vector<int>{options().worker_cpus[sid]})),
-             0);
+    // I think we can set affinity here as well based on the worker_cpus 
+    // and sid. Let's say we just want to affine and each worker to a particular
+    // core.
 
-    printf("Worker (SID %u, TID: %ld, not affined to any CPU)\n", sid,
+    fprintf(stderr, "Worker (SID %u, TID: %ld, not affined to any CPU)\n", sid,
            syscall(SYS_gettid));
 
     if (UsesFutex()) {

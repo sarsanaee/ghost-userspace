@@ -104,6 +104,8 @@ void FifoScheduler::TaskNew(FifoTask* task, const Message& msg) {
   const ghost_msg_payload_task_new* payload =
       static_cast<const ghost_msg_payload_task_new*>(msg.payload());
 
+  CpuList cpus = MachineTopology()->EmptyCpuList();;
+
   task->seqnum = msg.seqnum();
   task->run_state = FifoTask::RunState::kBlocked;
 
@@ -112,6 +114,15 @@ void FifoScheduler::TaskNew(FifoTask* task, const Message& msg) {
     task->run_state = FifoTask::RunState::kRunnable;
     Enqueue(task);
   }
+
+  // Checking the affinity for the workers of Darc
+  Ghost::SchedGetAffinity(gtid, cpus);
+
+  for(size_t i = 0; i < cpus.Size(); i++)
+    if (cpus.IsSet(i)) {
+      task->cpu = cpus[i];
+      break;
+    }
 
   num_tasks_++;
 }
@@ -291,8 +302,17 @@ void FifoScheduler::GlobalSchedule(const StatusWord& agent_sw,
       continue;
     }
 
+    // absl::FPrintF(stderr, "%s\n", available.CpuMaskStr());
+
     // Assign `next` to run on the CPU at the front of `available`.
     const Cpu& next_cpu = available.Front();
+
+    // if (next_cpu.id() != next->cpu.id()) {
+    //   next->prio_boost = true;
+    //   Enqueue(next);
+    //   continue;
+    // }
+
     CpuState* cs = cpu_state(next_cpu);
     cs->current = next;
     available.Clear(next_cpu);
