@@ -99,6 +99,26 @@ GhostOrchestrator::GhostOrchestrator(Orchestrator::Options opts)
   if (UsesPrioTable()) {
     InitPrioTable();
   }
+  
+  // Set the affinity
+  const std::vector<ghost::Gtid> gtids = thread_pool().GetGtids();
+  ghost::CpuList cpus = ghost::MachineTopology()->EmptyCpuList();
+
+  for (size_t i = 1; i < gtids.size(); i++) {
+    // I'm not sure why I'm getting the affinity first!
+    ghost::Ghost::SchedGetAffinity(gtids[i], cpus);
+
+    // Clear all the bits
+    for (size_t j = 0; j < cpus.Size(); j++) {
+      cpus.Clear(j);
+    }
+
+    // Only set one bit
+    cpus.Set(i);
+
+    // Set the affinity
+    ghost::Ghost::SchedSetAffinity(gtids[i], cpus);
+  }
 
   threads_ready_.Notify();
 }
