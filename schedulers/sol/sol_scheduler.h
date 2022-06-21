@@ -174,8 +174,6 @@ class SolScheduler : public BasicDispatchScheduler<SolTask> {
 
   bool SyncCpuState(const Cpu& cpu);
   void SyncTaskState(SolTask* task);
-  bool PreemptTask(SolTask* prev, SolTask* next,
-                   StatusWord::BarrierToken agent_barrier);
 
   // Marks a task as yielded.
   void Yield(SolTask* task);
@@ -207,7 +205,7 @@ class SolScheduler : public BasicDispatchScheduler<SolTask> {
 
   int global_cpu_core_;
   std::atomic<int32_t> global_cpu_;
-  Channel global_channel_;
+  LocalChannel global_channel_;
   int num_tasks_ = 0;
 
   std::deque<SolTask*> run_queue_;
@@ -225,10 +223,10 @@ std::unique_ptr<SolScheduler> SingleThreadSolScheduler(Enclave* enclave,
 
 // Operates as the Global or Satellite agent depending on input from the
 // global_scheduler->GetGlobalCPU callback.
-class SolAgent : public Agent {
+class SolAgent : public LocalAgent {
  public:
   SolAgent(Enclave* enclave, Cpu cpu, SolScheduler* global_scheduler)
-      : Agent(enclave, cpu), global_scheduler_(global_scheduler) {}
+      : LocalAgent(enclave, cpu), global_scheduler_(global_scheduler) {}
 
   void AgentThread() override;
   Scheduler* AgentScheduler() const override { return global_scheduler_; }

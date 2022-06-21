@@ -41,7 +41,7 @@ struct seqcount {
 typedef struct seqcount seqcount_t;
 
 // TODO: Replace with internal types.
-struct legorch_shmem_hdr {
+struct ghost_shmem_hdr {
   uint16_t version;
   uint16_t hdrlen;
   uint32_t maplen;
@@ -110,7 +110,7 @@ class PrioTable {
   struct sched_item* sched_item(int i) const;
   struct work_class* work_class(int i) const;
 
-  inline struct legorch_shmem_hdr* hdr() const { return hdr_; }
+  inline struct ghost_shmem_hdr* hdr() const { return hdr_; }
   inline int NumSchedItems() { return hdr()->si_num; }
   inline int NumWorkClasses() { return hdr()->wc_num; }
 
@@ -123,12 +123,14 @@ class PrioTable {
   void MarkUpdatedIndex(int idx, int num_retries);
   int NextUpdatedIndex();
 
+  pid_t Owner() const { return shmem_ ? shmem_->Owner() : 0; }
+
   PrioTable(const PrioTable&) = delete;
   PrioTable(PrioTable&&) = delete;
 
  private:
   std::unique_ptr<GhostShmem> shmem_;
-  struct legorch_shmem_hdr* hdr_ = nullptr;
+  struct ghost_shmem_hdr* hdr_ = nullptr;
 
   static constexpr int kStreamFreeEntry = std::numeric_limits<uint32_t>::max();
   struct stream* stream();
@@ -143,7 +145,7 @@ inline uint32_t seqcount::write_begin() {
 
   do {
     while (seq0 & kLocked) {  // Another writer exists, reload and spin/wait.
-      asm volatile("pause");
+      Pause();
       seq0 = seqnum.load(std::memory_order_relaxed);
     }
   } while (!seqnum.compare_exchange_weak(seq0, seq0 + kLocked,

@@ -127,7 +127,31 @@ void SolScheduler::TaskRunnable(SolTask* task, const Message& msg) {
   Enqueue(task);
 }
 
-void SolScheduler::TaskDeparted(SolTask* task, const Message& msg) { CHECK(0); }
+void SolScheduler::TaskDeparted(SolTask* task, const Message& msg) {
+  if (task->pending()) {
+    RunRequest* req = enclave()->GetRunRequest(task->cpu);
+    // Wait for txn to complete, because we might not get another message
+    // against this task to asynchronously complete it. Ignore return value,
+    // since SyncCpuState will check it anyway.
+    enclave()->CompleteRunRequest(req);
+    // Put the task either back into runqueue (txn failed) or oncpu (txn
+    // completed). It will be adjusted again appropriately by the checks below.
+    SyncCpuState(task->cpu);
+  }
+
+  if (task->oncpu()) {
+    CpuState* cs = cpu_state_of(task);
+    CHECK_EQ(cs->current, task);
+    cs->current = nullptr;
+  } else if (task->queued()) {
+    RemoveFromRunqueue(task);
+  } else {
+    CHECK(task->blocked());
+  }
+
+  allocator()->FreeTask(task);
+  num_tasks_--;
+}
 
 void SolScheduler::TaskDead(SolTask* task, const Message& msg) {
   CHECK_EQ(task->run_state, SolTask::RunState::kBlocked);
@@ -171,7 +195,9 @@ void SolScheduler::SyncTaskState(SolTask* task) {
 }
 
 void SolScheduler::TaskBlocked(SolTask* task, const Message& msg) {
-  if (task->pending()) SyncTaskState(task);
+  if (task->pending()) {
+    SyncTaskState(task);
+  }
 
   if (task->oncpu()) {
     CpuState* cs = cpu_state_of(task);
@@ -187,7 +213,9 @@ void SolScheduler::TaskBlocked(SolTask* task, const Message& msg) {
 }
 
 void SolScheduler::TaskPreempted(SolTask* task, const Message& msg) {
-  if (task->pending()) SyncTaskState(task);
+  if (task->pending()) {
+    SyncTaskState(task);
+  }
 
   task->preempted = true;
 
@@ -204,7 +232,9 @@ void SolScheduler::TaskPreempted(SolTask* task, const Message& msg) {
 }
 
 void SolScheduler::TaskYield(SolTask* task, const Message& msg) {
-  if (task->pending()) SyncTaskState(task);
+  if (task->pending()) {
+    SyncTaskState(task);
+  }
 
   if (task->oncpu()) {
     CpuState* cs = cpu_state_of(task);
@@ -266,48 +296,6 @@ void SolScheduler::RemoveFromRunqueue(SolTask* task) {
   CHECK(false);
 }
 
-bool SolScheduler::PreemptTask(SolTask* prev, SolTask* next,
-                               StatusWord::BarrierToken agent_barrier) {
-  GHOST_DPRINT(2, stderr, "PREEMPT(%d)\n", prev->cpu.id());
-
-  CHECK(!prev->pending());
-  CHECK_NE(prev, nullptr);
-  CHECK(prev->oncpu());
-
-  if (prev == next) {
-    return true;
-  }
-
-  CHECK(!next || !next->oncpu());
-
-  CpuState* cs = cpu_state(prev->cpu);
-  CHECK_EQ(cs->next, nullptr);
-
-  RunRequest* req = enclave()->GetRunRequest(prev->cpu);
-  if (next) {
-    req->Open({
-        .target = next->gtid,
-        .target_barrier = next->seqnum,
-        .agent_barrier = agent_barrier,
-    });
-
-    if (!req->Commit()) {
-      return false;
-    }
-  } else {
-    req->OpenUnschedule();
-    CHECK(req->Commit());
-  }
-
-  cs->current = next;
-
-  if (next) {
-    next->run_state = SolTask::RunState::kOnCpu;
-    next->cpu = prev->cpu;
-  }
-  return true;
-}
-
 void SolScheduler::GlobalSchedule(const StatusWord& agent_sw,
                                   StatusWord::BarrierToken agent_sw_last) {
   const int global_cpu_id = GetGlobalCPUId();
@@ -335,32 +323,6 @@ void SolScheduler::GlobalSchedule(const StatusWord& agent_sw,
         // Note that txn could have failed to commit in which case the
         // 'cs->next' will go back into the run queue.
         SyncCpuState(cpu);
-      } else if (Available(cpu) && req->commit_flags() == COMMIT_AT_SCHEDULE) {
-        // 'cpu' transitioned from !available->available without committing
-        // our transaction (this is an expected race with cpu going to idle).
-        // Abort the transaction and put 'cs->next' back on the runqueue.
-        if (req->Abort()) {
-          CHECK(!SyncCpuState(cpu));  // must return false since we aborted.
-        } else {
-          // Raced with kernel that was committing the txn (this is benign
-          // and we'll reap the completion next time around the loop).
-        }
-      } else {
-        // Available    req->commit_flags()
-        //     0               0              CPU hasn't processed the IPI.
-        //                                    (most likely it has claimed but
-        //                                     not committed the txn).
-        //
-        //     0         COMMIT_AT_SCHEDULE   CPU hasn't scheduled yet.
-        //                                    (this is the common case for
-        //                                     COMMIT_AT_SCHEDULE).
-        //
-        //     1               0              CPU hasn't processed the IPI
-        //                                    (eager abort since commit will
-        //                                     most likely fail?)
-        //
-        //     1         COMMIT_AT_SCHEDULE   Raced with CPU going idle
-        //                                    (handled explicitly above).
       }
     }
 
@@ -498,15 +460,16 @@ found:
   if (prev) {
     CHECK(prev->oncpu());
 
-    // Vacate CPU for running Global agent.
-    CHECK(PreemptTask(prev, nullptr, 0));
-    CHECK_EQ(cs->current, nullptr);
-
-    // Set 'prio_boost' to make it reschedule asap in case 'prev' is
-    // holding a critical resource.
-    prev->prio_boost = true;
-    prev->run_state = SolTask::RunState::kRunnable;
-    Enqueue(prev);
+    // We ping the agent on `target` below. Once that agent wakes up, it
+    // automatically preempts `prev`. The kernel generates a TASK_PREEMPT
+    // message for `prev`, which allows the scheduler to update the state for
+    // `prev`.
+    //
+    // This also allows the scheduler to gracefully handle the case where `prev`
+    // actually blocks/yields/etc. before it is preempted by the agent on
+    // `target`. In any of those cases, a TASK_BLOCKED/TASK_YIELD/etc. message
+    // is delivered for `prev` instead of a TASK_PREEMPT, so the state is still
+    // updated correctly for `prev` even if it is not preempted by the agent.
   }
 
   SetGlobalCPU(target);

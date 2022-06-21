@@ -45,7 +45,6 @@ class Scheduler;
 enum class CpuTickConfig {
   kNoTicks,
   kAllTicks,
-  kTickOnRequest,
 };
 
 // Contains the configuration for an Agent, including the topology, the list of
@@ -57,7 +56,12 @@ class AgentConfig {
   CpuList cpus_;
   int enclave_fd_ = -1;
   CpuTickConfig tick_config_ = CpuTickConfig::kNoTicks;
-  int stderr_fd = 2;
+  int stderr_fd_ = 2;
+  // Default to false to avoid initialization overhead of mlock (e.g., agent
+  // upgrade/restart may be slower due to mlock of the stacks of all agents). If
+  // a scheduler has a performance benefit from using mlock, then it can opt-in
+  // by setting this option to true.
+  bool mlockall_ = false;
 
   explicit AgentConfig(Topology* topology = nullptr,
                        CpuList cpus = MachineTopology()->EmptyCpuList())
@@ -154,10 +158,12 @@ class Enclave {
   // agent exits.
   virtual void WaitForOldAgent() = 0;
   virtual void InsertBpfPrograms() {}
+  virtual void DisableMyBpfProgLoad() {}
   // LocalEnclaves have a ctl fd, which various agent functions use.
   virtual int GetCtlFd() { return -1; }
   virtual void SetRunnableTimeout(absl::Duration d) {}
-  virtual void SetCommitAtTick() {}
+  virtual void SetCommitAtTick(bool enabled) {}
+  virtual void SetDeliverTicks(bool enabled) {}
 
   // REQUIRES: Must be called by an implementation when all Schedulers and
   // Agents have been constructed.
@@ -189,16 +195,16 @@ class Enclave {
   Topology* topology() const { return topology_; }
   const CpuList* cpus() const { return &enclave_cpus_; }
 
- protected:
-  const AgentConfig config_;
-  Topology* topology_;
-  CpuList enclave_cpus_;
-
   // Specializations for Attach and Detach must invoke the base method.
   // Note: Invoked by the actual thread associated with the Agent, prior to
   // invoking specialization.
   virtual void AttachAgent(const Cpu& cpu, Agent* agent);
   virtual void DetachAgent(Agent* agent);
+
+ protected:
+  const AgentConfig config_;
+  Topology* topology_;
+  CpuList enclave_cpus_;
 
   virtual void AttachScheduler(Scheduler* scheduler);
   virtual void DetachScheduler(Scheduler* scheduler);
@@ -212,7 +218,6 @@ class Enclave {
   std::list<Scheduler*> schedulers_ ABSL_GUARDED_BY(mu_);
   std::list<Agent*> agents_ ABSL_GUARDED_BY(mu_);
 
-  friend class Agent;
   friend class Scheduler;
 };
 
@@ -388,6 +393,8 @@ class RunRequest {
 
   ghost_txn* txn() { return txn_; }
 
+  static std::string StateToString(ghost_txn_state state);
+
  private:
   // These are helper functions for the state-checking functions above. These
   // are useful because the caller may only want to call `state()` once since
@@ -443,8 +450,14 @@ class LocalEnclave final : public Enclave {
                         std::to_string(ToInt64Milliseconds(d)));
   }
 
-  void SetCommitAtTick() final {
-    WriteEnclaveTunable(dir_fd_, "commit_at_tick", "1");  // 1 == enabled
+  void SetCommitAtTick(bool enabled) final {
+    const char* val = enabled ? "1" : "0";
+    WriteEnclaveTunable(dir_fd_, "commit_at_tick", val);
+  }
+
+  void SetDeliverTicks(bool enabled) final {
+    const char* val = enabled ? "1" : "0";
+    WriteEnclaveTunable(dir_fd_, "deliver_ticks", val);
   }
 
   // Runs l on every non-agent, ghost-task status word.
@@ -460,6 +473,14 @@ class LocalEnclave final : public Enclave {
   // agent_online), this blocks until that FD is closed.
   void WaitForOldAgent() final;
   void InsertBpfPrograms() final;
+
+  // Permanently disables the ability to load BPF programs for the calling
+  // process.
+  void DisableMyBpfProgLoad() final {
+    std::string cmd = "disable my bpf_prog_load";
+    CHECK_EQ(write(ctl_fd_, cmd.c_str(), cmd.length()), cmd.length());
+  }
+
   int GetCtlFd() final { return ctl_fd_; }
 
   static int MakeNextEnclave();

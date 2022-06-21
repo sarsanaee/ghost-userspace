@@ -52,13 +52,13 @@ TEST(CapabilitiesTest, RunNice) {
 // agent.Start();
 // notification.WaitForNotification();
 // agent.Terminate();
-class CapabilitiesAgent : public Agent {
+class CapabilitiesAgent : public LocalAgent {
  public:
   // Constructs the agent on the specified enclave (`enclave`) and CPU (`cpu`).
   // The agent notifies `notification` in its main thread body so that the test
   // can confirm that the agent actually ran.
   CapabilitiesAgent(Enclave* enclave, Cpu cpu, Notification* notification)
-      : Agent(enclave, cpu), notification_(notification) {}
+      : LocalAgent(enclave, cpu), notification_(notification) {}
 
  private:
   // The main thread body checks that it is in the ghOSt scheduling class and
@@ -101,7 +101,7 @@ TEST(CapabilitiesTest, AgentNice) {
   Topology* topology = MachineTopology();
   auto enclave = absl::make_unique<LocalEnclave>(
       AgentConfig(topology, topology->ToCpuList(std::vector<int>{kAgentCpu})));
-  Channel default_channel(GHOST_MAX_QUEUE_ELEMS, /*node=*/0);
+  LocalChannel default_channel(GHOST_MAX_QUEUE_ELEMS, /*node=*/0);
   default_channel.SetEnclaveDefault();
 
   Notification notification;
@@ -142,14 +142,17 @@ TEST(CapabilitiesTest, RunNoNice) {
 // ensure that tests run after this one still hold the `CAP_SYS_NICE`
 // capability.
 TEST(CapabilitiesTest, AgentNoNice) {
+  LocalEnclave enclave(AgentConfig{MachineTopology()});
+  LocalChannel chan(GHOST_MAX_QUEUE_ELEMS, /*node=*/0);
+
   // This test deliberately uses an `std::thread` instead of a `GhostThread` to
   // ensure the test only calls `sched_setscheduler` to attempt to move the
   // thread to the ghOSt kernel scheduling class once.
-  std::thread thread([]() {
+  std::thread thread([&enclave, &chan]() {
     DropNiceCapability();
     // We do not need initialize an enclave, a channel, etc., for the agent
     // since the call below will fail before these are needed.
-    EXPECT_THAT(SchedAgentEnterGhost(-1, -1), Eq(-1));
+    EXPECT_THAT(SchedAgentEnterGhost(enclave.GetCtlFd(), chan.GetFd()), Eq(-1));
     EXPECT_THAT(errno, Eq(EPERM));
   });
   thread.join();

@@ -42,7 +42,7 @@
 
 namespace ghost {
 
-static inline int GetTID();
+inline pid_t GetTID();
 void Exit(int code);
 size_t GetFileSize(int fd);
 void PrintBacktrace(FILE* f, void* uctx = nullptr);
@@ -79,13 +79,13 @@ void PrintBacktrace(FILE* f, void* uctx = nullptr);
 //
 // See `Documentation/memory-barriers.txt` in the Linux kernel for more details.
 template <typename T>
-static inline T READ_ONCE(const T& x) {
+inline T READ_ONCE(const T& x) {
   return reinterpret_cast<const std::atomic<T>*>(&x)->load(
       std::memory_order_relaxed);
 }
 
 template <typename T>
-static inline void WRITE_ONCE(T& x, T val) {
+inline void WRITE_ONCE(T& x, T val) {
   reinterpret_cast<std::atomic<T>*>(&x)->store(val, std::memory_order_relaxed);
 }
 
@@ -101,9 +101,9 @@ static inline void WRITE_ONCE(T& x, T val) {
 //
 // IGNORE_RETURN_VALUE(SomeFunction());  // Does not generate a warning.
 template <typename T>
-static inline void IGNORE_RETURN_VALUE(const T& x) {}
+inline void IGNORE_RETURN_VALUE(const T& x) {}
 
-static inline absl::Time MonotonicNow() {
+inline absl::Time MonotonicNow() {
   timespec ts;
 
   CHECK_EQ(clock_gettime(CLOCK_MONOTONIC, &ts), 0);
@@ -111,7 +111,7 @@ static inline absl::Time MonotonicNow() {
 }
 
 // Returns the TID (thread identifier) of the calling thread.
-static inline pid_t GetTID() {
+inline pid_t GetTID() {
   static thread_local int tid = syscall(__NR_gettid);
   return tid;
 }
@@ -127,6 +127,24 @@ static inline pid_t GetTID() {
 // Most callers should never need to call this function (preferring
 // Gtid::Current() since it caches the gtid in a thread-local var).
 int64_t GetGtid();
+
+// Issues the equivalent of an x86 `pause` instruction on the target
+// architecture. This is generally useful to call in the body of a spinlock loop
+// since it reduces power consumption and cache contention.
+inline void Pause() {
+#ifndef __GNUC__
+#error "GCC is needed for the macros in the `Pause()` function."
+#endif
+#if defined(__x86_64__)
+  asm volatile("pause");
+#elif defined(__aarch64__)
+  asm volatile("yield");
+#elif defined(__powerpc64__)
+  asm volatile("or 27,27,27");
+#else
+  // Do nothing.
+#endif
+}
 
 // This class encapsulates a GTID (ghOSt thread identifier).
 //

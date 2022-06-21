@@ -80,10 +80,6 @@ EdfScheduler::EdfScheduler(Enclave* enclave, CpuList cpulist,
 
   bpf_map__resize(bpf_obj_->maps.cpu_data, libbpf_num_possible_cpus());
 
-  bpf_program__set_types(bpf_obj_->progs.edf_skip_tick,
-                         BPF_PROG_TYPE_GHOST_SCHED, BPF_GHOST_SCHED_SKIP_TICK);
-  bpf_program__set_types(bpf_obj_->progs.edf_send_tick,
-                         BPF_PROG_TYPE_GHOST_SCHED, BPF_GHOST_SCHED_SKIP_TICK);
   bpf_program__set_types(bpf_obj_->progs.edf_pnt,
                          BPF_PROG_TYPE_GHOST_SCHED, BPF_GHOST_SCHED_PNT);
   bpf_program__set_types(bpf_obj_->progs.edf_msg_send, BPF_PROG_TYPE_GHOST_MSG,
@@ -93,17 +89,11 @@ EdfScheduler::EdfScheduler(Enclave* enclave, CpuList cpulist,
 
   switch (config.edf_ticks_) {
     case CpuTickConfig::kNoTicks:
-      CHECK_EQ(agent_bpf_register(bpf_obj_->progs.edf_skip_tick,
-                                  BPF_GHOST_SCHED_SKIP_TICK),
-               0);
+      bpf_obj_->bss->skip_tick = true;
       break;
     case CpuTickConfig::kAllTicks:
-      CHECK_EQ(agent_bpf_register(bpf_obj_->progs.edf_send_tick,
-                                  BPF_GHOST_SCHED_SKIP_TICK),
-               0);
+      bpf_obj_->bss->skip_tick = false;
       break;
-    case CpuTickConfig::kTickOnRequest:
-      GHOST_ERROR("Must pick kAllTicks or kNoTicks");
   }
   CHECK_EQ(agent_bpf_register(bpf_obj_->progs.edf_pnt, BPF_GHOST_SCHED_PNT),
            0);
@@ -257,11 +247,23 @@ void EdfScheduler::TaskRunnable(EdfTask* task, const Message& msg) {
   Enqueue(task);
 }
 
-void EdfScheduler::TaskDeparted(EdfTask* task, const Message& msg) {}
+void EdfScheduler::TaskDeparted(EdfTask* task, const Message& msg) {
+  if (task->oncpu()) {
+    CpuState* cs = cpu_state_of(task);
+    CHECK_EQ(cs->current, task);
+    cs->current = nullptr;
+  } else if (task->queued()) {
+    RemoveFromRunqueue(task);
+  } else {
+    CHECK(task->blocked());
+  }
+
+  allocator()->FreeTask(task);
+  num_tasks_--;
+}
 
 void EdfScheduler::TaskDead(EdfTask* task, const Message& msg) {
-  CHECK_EQ(task->run_state,
-           EdfTask::RunState::kBlocked);  // Need to schedule to exit.
+  CHECK_EQ(task->run_state, EdfTask::RunState::kBlocked);
   allocator()->FreeTask(task);
 
   num_tasks_--;
@@ -782,18 +784,18 @@ void EdfScheduler::PickNextGlobalCPU() {
 
       if (prev) {
         CHECK(prev->oncpu());
-        // Vacate CPU for running Global agent.
-        bool in_sync = PreemptTask(prev, nullptr, 0);
-        if (in_sync) {
-          // Set 'prio_boost' to make it reschedule asap in case 'prev' is
-          // holding a critical resource.
-          prev->prio_boost = true;
-          Enqueue(prev);
-          cs->current = nullptr;
-        } else {
-          // Try the next CPU.
-          continue;
-        }
+
+        // We ping the agent on `target` below. Once that agent wakes up, it
+        // automatically preempts `prev`. The kernel generates a TASK_PREEMPT
+        // message for `prev`, which allows the scheduler to update the state
+        // for `prev`.
+        //
+        // This also allows the scheduler to gracefully handle the case where
+        // `prev` actually blocks/yields/etc. before it is preempted by the
+        // agent on `target`. In any of those cases, a
+        // TASK_BLOCKED/TASK_YIELD/etc. message is delivered for `prev` instead
+        // of a TASK_PREEMPT, so the state is still updated correctly for `prev`
+        // even if it is not preempted by the agent.
       }
 
       SetGlobalCPU(cpu);

@@ -35,9 +35,9 @@ using ::testing::Ne;
 
 // A simple agent that just idles.
 template <size_t max_notifications = 1>
-class SimpleAgent : public Agent {
+class SimpleAgent : public LocalAgent {
  public:
-  SimpleAgent(Enclave* enclave, Cpu cpu) : Agent(enclave, cpu) {
+  SimpleAgent(Enclave* enclave, Cpu cpu) : LocalAgent(enclave, cpu) {
     // Agent notifies the main thread on idle (up to max_notifications_ times).
     static_assert(max_notifications > 0);
     static_assert(max_notifications < 100);  // let's be reasonable.
@@ -161,7 +161,7 @@ class FullSimpleAgent : public FullAgent<EnclaveType> {
   }
 
  private:
-  Channel channel_;
+  LocalChannel channel_;
 #undef AGENT_AS
 };
 
@@ -324,9 +324,9 @@ TEST(AgentTest, ExitHandler) {
   LocalEnclave::DestroyAllEnclaves();
 }
 
-class SpinningAgent : public Agent {
+class SpinningAgent : public LocalAgent {
  public:
-  SpinningAgent(Enclave* enclave, Cpu cpu) : Agent(enclave, cpu) {}
+  SpinningAgent(Enclave* enclave, Cpu cpu) : LocalAgent(enclave, cpu) {}
 
  protected:
   void AgentThread() override {
@@ -343,7 +343,7 @@ class SpinningAgent : public Agent {
         RunRequest* req = enclave()->GetRunRequest(cpu());
         req->LocalYield(agent_barrier, RTLA_ON_IDLE);
       }
-      asm volatile("pause");
+      Pause();
     }
   }
 };
@@ -410,7 +410,8 @@ class FullTickAgent : public FullAgent<EnclaveType> {
 
         // Associate the agent with 'agent_channel' (thereby breaking the
         // implicit association with 'default_channel').
-        EXPECT_THAT(agent_channel_.AssociateTask(agent.gtid(), agent.barrier()),
+        EXPECT_THAT(agent_channel_.AssociateTask(agent.gtid(), agent.barrier(),
+                                                 /*status=*/nullptr),
                     IsTrue());
 
         // There should be at least one MSG_CPU_TICK on the 'default_channel'.
@@ -431,8 +432,8 @@ class FullTickAgent : public FullAgent<EnclaveType> {
   }
 
  private:
-  Channel default_channel_;
-  Channel agent_channel_;
+  LocalChannel default_channel_;
+  LocalChannel agent_channel_;
 #undef AGENT_AS
 };
 
@@ -449,14 +450,14 @@ TEST(AgentTest, CpuTick) {
 }
 
 // An agent that dequeues messages and invokes a msg-specific callback.
-class CallbackAgent : public Agent {
+class CallbackAgent : public LocalAgent {
  public:
   using CallbackMap =
       absl::flat_hash_map<int, std::function<void(Message, Cpu)>>;
 
   CallbackAgent(Enclave* enclave, Cpu cpu, Channel* channel,
                 CallbackMap callbacks)
-      : Agent(enclave, cpu), channel_(channel), callbacks_(callbacks) {
+      : LocalAgent(enclave, cpu), channel_(channel), callbacks_(callbacks) {
     channel_->SetEnclaveDefault();
   }
 
@@ -521,7 +522,7 @@ TEST(AgentTest, MsgTimerExpired) {
   Cpu target_cpu = topology->cpu(absl::Uniform(rng, 0u, agent_cpus.Size()));
 
   const int numa_node = 0;
-  Channel default_channel(GHOST_MAX_QUEUE_ELEMS, numa_node);
+  LocalChannel default_channel(GHOST_MAX_QUEUE_ELEMS, numa_node);
   default_channel.SetEnclaveDefault();
 
   // Create a timerfd.
@@ -541,8 +542,6 @@ TEST(AgentTest, MsgTimerExpired) {
     ASSERT_THAT(payload->type, Eq(fd));
     ASSERT_THAT(payload->cookie, Eq(fd));
 
-    msgs[cpu.id()]++;
-
     // Got one message but it may have accrued more than one tick
     // if agent execution was delayed (e.g. by hwintr or softirq).
     //
@@ -551,22 +550,27 @@ TEST(AgentTest, MsgTimerExpired) {
     uint64_t t = 0;
     int nbytes = read(fd, &t, sizeof(t));
     if (nbytes != sizeof(t)) {
+      // This can happen due to a race with 'close(fd)' below done by the
+      // main thread. Since we don't have a good way to figure out how many
+      // 'ticks' would have been read from the timerfd (at least one but
+      // could be more) let's just pretend we never got the msg.
       EXPECT_THAT(nbytes, Eq(-1));
-      EXPECT_THAT(errno, Eq(EAGAIN));
+      EXPECT_THAT(errno, Eq(EBADF));
     } else {
       EXPECT_THAT(t, Ge(1));
       ticks[cpu.id()] += t;
+      msgs[cpu.id()]++;
     }
   };
 
-  std::vector<std::unique_ptr<Channel>> channels;
+  std::vector<std::unique_ptr<LocalChannel>> channels;
   std::vector<std::unique_ptr<CallbackAgent>> agents;
   for (const Cpu& cpu : agent_cpus) {
     // Associate each agent with its own channel.
     //
     // The channel is configured to wakeup the agent when the kernel produces
     // a message into it.
-    auto channel = absl::make_unique<Channel>(
+    auto channel = absl::make_unique<LocalChannel>(
         GHOST_MAX_QUEUE_ELEMS, numa_node, MachineTopology()->ToCpuList({cpu}));
     agents.emplace_back(
         new CallbackAgent(enclave.get(), cpu, channel.get(),
@@ -578,7 +582,8 @@ TEST(AgentTest, MsgTimerExpired) {
     // Associate the agent with 'channel' (thereby breaking the implicit
     // association with 'default_channel').
     Gtid agent_gtid = agents.back()->gtid();
-    while (!channel->AssociateTask(agent_gtid, agents.back()->barrier())) {
+    while (!channel->AssociateTask(agent_gtid, agents.back()->barrier(),
+                                   /*status=*/nullptr)) {
       // AssociateTask may fail if agent barrier is stale.
       EXPECT_THAT(errno, Eq(ESTALE));
     }
@@ -605,12 +610,14 @@ TEST(AgentTest, MsgTimerExpired) {
   const absl::Duration kDelay = absl::Milliseconds(50);
   absl::SleepFor(kDelay);
 
-  // Stop timer and disassociate from ghost before terminating agent.
-  struct itimerspec itimerzero = {
-      .it_interval = {0},
-      .it_value = {0},
-  };
-  ASSERT_THAT(Ghost::TimerFdSettime(fd, /*flags=*/0, &itimerzero), Eq(0));
+  // Stop the timer:
+  // - this can race with a concurrent read(fd) in 'timer_callback' and
+  //   cause it to fail with an EBADF.
+  // - we could eliminate the race by doing this _after_ terminating the
+  //   agents but that pushes the race down into the kernel where the
+  //   timerfd callback doesn't find an agent to deliver the msg (this
+  //   race is benign but does result in a WARNING which is not ideal).
+  close(fd);
 
   // Terminate all agents.
   for (auto& a : agents) a->Terminate();
@@ -619,7 +626,6 @@ TEST(AgentTest, MsgTimerExpired) {
     if (cpu == target_cpu) {
       // Each 'msg' accounts for one or more 'ticks'.
       EXPECT_THAT(ticks[cpu.id()], Ge(msgs[cpu.id()]));
-      EXPECT_THAT(ticks[cpu.id()], Ge(kDelay / kPeriod));
     } else {
       EXPECT_THAT(ticks[cpu.id()], Eq(0));
       EXPECT_THAT(msgs[cpu.id()], Eq(0));
@@ -644,7 +650,7 @@ TEST(AgentTest, MsgCpuNotIdle) {
   Cpu target_cpu = topology->cpu(absl::Uniform(rng, 0u, agent_cpus.Size()));
 
   const int numa_node = 0;
-  Channel default_channel(GHOST_MAX_QUEUE_ELEMS, numa_node);
+  LocalChannel default_channel(GHOST_MAX_QUEUE_ELEMS, numa_node);
   default_channel.SetEnclaveDefault();
 
   // Per-cpu counter for the number of CPU_NOT_IDLE msgs.
@@ -663,10 +669,10 @@ TEST(AgentTest, MsgCpuNotIdle) {
     cpu_not_idle_msgs[cpu.id()]++;
   };
 
-  std::vector<std::unique_ptr<Channel>> channels;
+  std::vector<std::unique_ptr<LocalChannel>> channels;
   std::vector<std::unique_ptr<CallbackAgent>> agents;
   for (const Cpu& cpu : agent_cpus) {
-    auto channel = absl::make_unique<Channel>(
+    auto channel = absl::make_unique<LocalChannel>(
         GHOST_MAX_QUEUE_ELEMS, numa_node, MachineTopology()->ToCpuList({cpu}));
     agents.emplace_back(new CallbackAgent(enclave.get(), cpu, channel.get(),
                                           {
@@ -682,7 +688,8 @@ TEST(AgentTest, MsgCpuNotIdle) {
     // Associate the agent with 'channel' (thereby breaking the implicit
     // association with 'default_channel').
     Gtid agent_gtid = agents.back()->gtid();
-    while (!channel->AssociateTask(agent_gtid, agents.back()->barrier())) {
+    while (!channel->AssociateTask(agent_gtid, agents.back()->barrier(),
+                                   /*status=*/nullptr)) {
       // AssociateTask may fail if agent barrier is stale.
       EXPECT_THAT(errno, Eq(ESTALE));
     }
@@ -721,9 +728,9 @@ TEST(AgentTest, MsgCpuNotIdle) {
 //   SetSchedAgent agent(enclave, cpu);
 //   agent.Start();
 //   agent.Terminate();
-class SetSchedAgent : public Agent {
+class SetSchedAgent : public LocalAgent {
  public:
-  SetSchedAgent(Enclave* enclave, Cpu cpu) : Agent(enclave, cpu) {}
+  SetSchedAgent(Enclave* enclave, Cpu cpu) : LocalAgent(enclave, cpu) {}
 
  protected:
   void AgentThread() override {
@@ -770,7 +777,7 @@ TEST(AgentTest, SetSched) {
   auto enclave = absl::make_unique<LocalEnclave>(
       AgentConfig(topology, topology->ToCpuList(std::vector<int>{agent_cpu})));
 
-  Channel default_channel(GHOST_MAX_QUEUE_ELEMS, /*node=*/0);
+  LocalChannel default_channel(GHOST_MAX_QUEUE_ELEMS, /*node=*/0);
   default_channel.SetEnclaveDefault();
 
   SetSchedAgent agent(enclave.get(), topology->cpu(agent_cpu));

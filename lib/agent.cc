@@ -23,14 +23,13 @@ namespace ghost {
 Agent::~Agent() {
   enclave_->DetachAgent(this);
   CHECK(!thread_.joinable());
-  status_word_.Free();
 }
 
 void Agent::StartBegin() { thread_ = std::thread(&Agent::ThreadBody, this); }
 
 void Agent::StartComplete() { ready_.WaitForNotification(); }
 
-void Agent::ThreadBody() {
+void LocalAgent::ThreadBody() {
   int queue_fd;
   Scheduler* s = AgentScheduler();
   if (!s) {
@@ -43,6 +42,8 @@ void Agent::ThreadBody() {
   } else {
     queue_fd = s->GetDefaultChannel().GetFd();
   }
+
+  CHECK_EQ(prctl(PR_SET_NAME, absl::StrCat("ap_task_", cpu().id()).c_str()), 0);
 
   gtid_ = Gtid::Current();
   CHECK_EQ(Ghost::SchedSetAffinity(Gtid::Current(),
@@ -61,7 +62,7 @@ void Agent::ThreadBody() {
   } while (ret && errno == EBUSY);
   CHECK_EQ(ret, 0);
 
-  status_word_ = StatusWord(StatusWord::AgentSW{});
+  status_word_ = LocalStatusWord(StatusWord::AgentSW{});
   CHECK(!status_word_.empty());
 
   enclave_->AttachAgent(cpu_, this);
@@ -95,7 +96,9 @@ void Agent::TerminateComplete() {
   // Since agent state transitions don't produce task messages we use
   // the GHOST_SW_F_CANFREE bit to check whether the kernel has invoked
   // the 'task_dead' callback.
-  while (!status_word_.can_free()) absl::SleepFor(absl::Milliseconds(1));
+  while (!status_word().can_free()) {
+    absl::SleepFor(absl::Milliseconds(1));
+  }
 }
 
 // static

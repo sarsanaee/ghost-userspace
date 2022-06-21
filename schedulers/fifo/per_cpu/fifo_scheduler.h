@@ -104,7 +104,17 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
   void DumpState(const Cpu& cpu, int flags) final;
   std::atomic<bool> debug_runqueue_ = false;
 
+  int CountAllTasks() {
+    int num_tasks = 0;
+    allocator()->ForEachTask([&num_tasks](Gtid gtid, const FifoTask* task) {
+      ++num_tasks;
+      return true;
+    });
+    return num_tasks;
+  }
+
   static constexpr int kDebugRunqueue = 1;
+  static constexpr int kCountAllTasks = 2;
 
  protected:
   void TaskNew(FifoTask* task, const Message& msg) final;
@@ -127,7 +137,7 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
 
   struct CpuState {
     FifoTask* current = nullptr;
-    std::unique_ptr<ghost::Channel> channel = nullptr;
+    std::unique_ptr<ghost::LocalChannel> channel = nullptr;
     FifoRq run_queue;
   } ABSL_CACHELINE_ALIGNED;
 
@@ -140,15 +150,15 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
   }
 
   CpuState cpu_states_[MAX_CPUS];
-  Channel* default_channel_ = nullptr;
+  LocalChannel* default_channel_ = nullptr;
 };
 
 std::unique_ptr<FifoScheduler> MultiThreadedFifoScheduler(Enclave* enclave,
                                                           CpuList cpulist);
-class FifoAgent : public Agent {
+class FifoAgent : public LocalAgent {
  public:
   FifoAgent(Enclave* enclave, Cpu cpu, FifoScheduler* scheduler)
-      : Agent(enclave, cpu), scheduler_(scheduler) {}
+      : LocalAgent(enclave, cpu), scheduler_(scheduler) {}
 
   void AgentThread() override;
   Scheduler* AgentScheduler() const override { return scheduler_; }
@@ -182,6 +192,9 @@ class FullFifoAgent : public FullAgent<EnclaveType> {
       case FifoScheduler::kDebugRunqueue:
         scheduler_->debug_runqueue_ = true;
         response.response_code = 0;
+        return;
+      case FifoScheduler::kCountAllTasks:
+        response.response_code = scheduler_->CountAllTasks();
         return;
       default:
         response.response_code = -1;
