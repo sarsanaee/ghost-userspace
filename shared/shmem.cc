@@ -67,7 +67,7 @@ struct GhostShmem::InternalHeader {
 
   std::atomic<bool> ready, finished;
 
-  int owning_pid;
+  pid_t owning_pid;
   int64_t client_version;
 };
 
@@ -182,6 +182,7 @@ bool GhostShmem::ConnectShmem(int64_t client_version, const char* suffix,
   CHECK_EQ(hdr_->client_version, client_version);
   CHECK_EQ(hdr_->mapping_size, map_size_);
   CHECK_EQ(hdr_->header_size, kHeaderReservedBytes);
+  CHECK_EQ(hdr_->owning_pid, pid);
   return true;
 }
 
@@ -192,17 +193,31 @@ int GhostShmem::OpenGhostShmemFd(const char* suffix, pid_t pid) {
   needle.append(kMemFdPrefix);
   needle.append(suffix);
 
-  for (auto& f : fs::directory_iterator(path)) {
-    CHECK(fs::is_symlink(f));
-    std::string p = fs::read_symlink(f);
+  std::error_code dir_error;
+  auto f = fs::directory_iterator(path, dir_error);
+  auto end = fs::directory_iterator();
+
+  for (/* f */; !dir_error && f != end; f.increment(dir_error)) {
+    // It's possible for f to disappear at any moment if the file is closed.
+    std::error_code ec;
+    std::string p = fs::read_symlink(f->path(), ec);
+    if (ec) {
+      continue;
+    }
     if (absl::StartsWith(p, needle)) {
-      std::string path = fs::path(f);
+      std::string path = f->path();
       int fd = open(path.c_str(), O_RDWR | O_CLOEXEC);
-      CHECK_GE(fd, 0);
+      if (fd < 0) {
+        continue;
+      }
       return fd;
     }
   }
   return -1;
+}
+
+pid_t GhostShmem::Owner() const {
+  return hdr_ ? hdr_->owning_pid : 0;
 }
 
 // static

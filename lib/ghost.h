@@ -197,10 +197,11 @@ class Ghost {
         .flags = flags,
     };
 
-    int err = ioctl(gbl_ctl_fd_, GHOST_IOC_ASSOC_QUEUE, &data);
+    int assoc_status = ioctl(gbl_ctl_fd_, GHOST_IOC_ASSOC_QUEUE, &data);
+    int err = (assoc_status < 0) ? assoc_status : 0;
 
     if (status != nullptr) {
-      *status = data.status;
+      *status = err ? 0 : assoc_status;
     }
     return err;
   }
@@ -302,11 +303,17 @@ class Ghost {
     return iter != versions.end();
   }
 
-  static void SetGlobalEnclaveCtlFd(int fd) { gbl_ctl_fd_ = fd; }
+  static void SetGlobalEnclaveFds(int ctl_fd, int dir_fd) {
+    gbl_ctl_fd_ = ctl_fd;
+    gbl_dir_fd_ = dir_fd;
+  }
   static int GetGlobalEnclaveCtlFd() { return gbl_ctl_fd_; }
-  static void CloseGlobalEnclaveCtlFd() {
+  static int GetGlobalEnclaveDirFd() { return gbl_dir_fd_; }
+  static void CloseGlobalEnclaveFds() {
     if (gbl_ctl_fd_ >= 0) close(gbl_ctl_fd_);
     gbl_ctl_fd_ = -1;
+    if (gbl_dir_fd_ >= 0) close(gbl_dir_fd_);
+    gbl_dir_fd_ = -1;
   }
 
   static void SetGlobalStatusWordTable(StatusWordTable* swt) {
@@ -345,6 +352,7 @@ class Ghost {
 
  private:
   static int gbl_ctl_fd_;
+  static int gbl_dir_fd_;
   static StatusWordTable* gbl_sw_table_;
 };
 
@@ -369,16 +377,8 @@ class GhostSignals {
 // It releases the word in its destructor.
 class StatusWord {
  public:
+  struct AgentSW {};
   typedef uint32_t BarrierToken;
-
-  // Initializes to an empty status word.
-  StatusWord() {}
-  // Initializes to a known sw.  gtid is only used for debugging.
-  StatusWord(Gtid gtid, ghost_sw_info sw_info);
-
-  // Takes ownership of the word in "move_from", move_from becomes empty.
-  StatusWord(StatusWord&& move_from);
-  StatusWord& operator=(StatusWord&&);
 
   // REQUIRES: *this must be empty.
   virtual ~StatusWord();
@@ -386,9 +386,9 @@ class StatusWord {
   // Signals to ghOSt that the status-word associated with *this is no longer
   // being used and may be potentially freed.  Resets *this to empty().
   // REQUIRES: *this must not be empty().
-  virtual void Free();
+  virtual void Free() = 0;
 
-  bool empty() { return sw_ == nullptr; }
+  bool empty() const { return sw_ == nullptr; }
 
   // Returns a 'Null' barrier token, for call-sites where it is not required.
   static BarrierToken NullBarrierToken() { return 0; }
@@ -404,7 +404,7 @@ class StatusWord {
   }
   uint64_t runtime() const { return sw_runtime(); }
 
-  bool stale(BarrierToken prev) { return prev == barrier(); }
+  bool stale(BarrierToken prev) const { return prev == barrier(); }
 
   bool in_use() const { return sw_flags() & GHOST_SW_F_INUSE; }
   bool can_free() const { return sw_flags() & GHOST_SW_F_CANFREE; }
@@ -413,20 +413,17 @@ class StatusWord {
   bool runnable() const { return sw_flags() & GHOST_SW_TASK_RUNNABLE; }
   bool boosted_priority() const { return sw_flags() & GHOST_SW_BOOST_PRIO; }
 
-  uint32_t id() { return sw_info_.id; }
+  uint32_t id() const { return sw_info_.id; }
 
   Gtid owner() const { return owner_; }
 
-  StatusWord(const StatusWord&) = delete;
-  StatusWord& operator=(const StatusWord&) = delete;
+  ghost_sw_info sw_info() const { return sw_info_; }
+  const ghost_status_word* sw() const { return sw_; }
 
  protected:
-  struct AgentSW {};
-  explicit StatusWord(AgentSW);
-
-  Gtid owner_;  // Debug only, remove at some point.
-  ghost_sw_info sw_info_;
-  ghost_status_word* sw_ = nullptr;
+  // Initializes to an empty status word.
+  StatusWord() {}
+  StatusWord(Gtid gtid, ghost_sw_info sw_info);
 
   uint32_t sw_barrier() const {
     std::atomic<uint32_t>* barrier =
@@ -446,7 +443,29 @@ class StatusWord {
     return flags->load(std::memory_order_acquire);
   }
 
-  friend class Agent;  // For AgentSW constructor.
+  Gtid owner_;  // Debug only, remove at some point.
+  ghost_sw_info sw_info_;
+  ghost_status_word* sw_ = nullptr;
+};
+
+class LocalStatusWord : public StatusWord {
+ public:
+  // Initializes to an empty status word.
+  LocalStatusWord() {}
+  // Initializes to a known sw.  gtid is only used for debugging.
+  LocalStatusWord(Gtid gtid, ghost_sw_info sw_info)
+      : StatusWord(gtid, sw_info) {}
+  // Initializes an agent status word.
+  explicit LocalStatusWord(StatusWord::AgentSW);
+
+  // Takes ownership of the word in "move_from", move_from becomes empty.
+  LocalStatusWord(LocalStatusWord&& move_from);
+  LocalStatusWord& operator=(LocalStatusWord&&);
+
+  LocalStatusWord(const LocalStatusWord&) = delete;
+  LocalStatusWord& operator=(const LocalStatusWord&) = delete;
+
+  void Free() override;
 };
 
 class PeriodicEdge {
@@ -528,7 +547,7 @@ class GhostThread {
   Gtid gtid() { return gtid_; }
 
   // Used by client processes who don't care which enclave they are in.
-  static void SetGlobalEnclaveCtlFdOnce();
+  static void SetGlobalEnclaveFdsOnce();
 
  private:
   // The thread's TID (thread identifier).
@@ -548,9 +567,9 @@ class GhostThread {
 };
 
 // Moves the thread with PID `pid` to the ghOSt scheduling class, using the
-// enclave ctl_fd.  If ctl_fd is -1, this will use the enclave ctl_fd previously
-// set with SetGlobalEnclaveCtlFd().
-int SchedTaskEnterGhost(pid_t pid, int ctl_fd = -1);
+// enclave dir_fd.  If dir_fd is -1, this will use the enclave dir_fd previously
+// set with SetGlobalEnclaveFds().
+int SchedTaskEnterGhost(pid_t pid, int dir_fd = -1);
 // Makes the calling thread an agent.  Note that the calling thread must have
 // the `CAP_SYS_NICE` capability to make itself an agent.
 int SchedAgentEnterGhost(int ctl_fd, int queue_fd);

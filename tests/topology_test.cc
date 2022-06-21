@@ -458,8 +458,8 @@ TEST(TopologyTest, CpuMaskStr) {
   TestList(TestTopology(), {1, 2, 3, 4, 5, 20, 87, 94, 100},
            "10,40800000,00000000,0010003e");
   TestList(TestTopology(), {0, 1, 2, 3, 16}, "1000f");
-  TestList(TestTopology(), {4, 5, 6, 7, 31, 129},
-           "2,00000000,00000000,00000000,800000f0");
+  TestList(TestTopology(), {4, 5, 6, 7, 31, 105},
+           "200,00000000,00000000,800000f0");
   TestList(TestTopology(),
            {0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
@@ -935,6 +935,30 @@ TEST(TopologyTest, ExportTestTopologyWithNoL3Cache) {
   // they are the same length and each element in one vector is equal to the
   // element in the same index in the other vector.
   EXPECT_THAT(raw_cpus, Eq(compare));
+}
+
+// Tests that CpusOnNode works correctly when we have >2 NUMA nodes.
+TEST(TopologyTest, CpusOnNode) {
+  constexpr int kNumNodes = 4;
+  std::vector<Cpu::Raw> cpus;
+  for (int i = 0; i < kNumNodes; i++) {
+    Cpu::Raw cpu;
+    cpu.cpu = i;
+    cpu.core = i;
+    cpu.smt_idx = 0;
+    cpu.numa_node = i;
+    cpu.siblings.push_back(i);
+    cpu.l3_siblings.push_back(i);
+    cpus.push_back(cpu);
+  }
+
+  UpdateCustomTopology(cpus);
+
+  for (int i = 0; i < kNumNodes; i++) {
+    CpuList cpus_on_node = CustomTopology()->CpusOnNode(i);
+    EXPECT_THAT(cpus_on_node.Size(), Eq(1));
+    EXPECT_THAT(cpus_on_node.Front().id(), Eq(i));
+  }
 }
 
 }  // namespace

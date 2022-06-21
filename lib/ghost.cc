@@ -79,7 +79,26 @@ static ghost_status_word* status_word_from_info(ghost_sw_info* sw_info) {
   return table->get(sw_info->index);
 }
 
-StatusWord& StatusWord::operator=(StatusWord&& move_from) {
+StatusWord::StatusWord(Gtid gtid, ghost_sw_info sw_info) {
+  sw_info_ = sw_info;
+  sw_ = status_word_from_info(&sw_info_);
+  owner_ = gtid;
+}
+
+StatusWord::~StatusWord() {
+  // TODO: Consider just making this automatic?
+  if (!empty()) {
+    GHOST_ERROR("%s leaked status word", owner_.describe());
+  }
+}
+
+LocalStatusWord::LocalStatusWord(StatusWord::AgentSW) {
+  CHECK_ZERO(Ghost::GetStatusWordInfo(GHOST_AGENT, GHOST_THIS_CPU, &sw_info_));
+  sw_ = status_word_from_info(&sw_info_);
+  owner_ = Gtid::Current();
+}
+
+LocalStatusWord& LocalStatusWord::operator=(LocalStatusWord&& move_from) {
   if (&move_from == this) return *this;
 
   sw_info_ = move_from.sw_info_;
@@ -90,28 +109,11 @@ StatusWord& StatusWord::operator=(StatusWord&& move_from) {
   return *this;
 }
 
-StatusWord::StatusWord(StatusWord&& move_from) { *this = std::move(move_from); }
-
-StatusWord::~StatusWord() {
-  // TODO: Consider just making this automatic?
-  if (!empty()) {
-    GHOST_ERROR("%s leaked status word", owner_.describe());
-  }
+LocalStatusWord::LocalStatusWord(LocalStatusWord&& move_from) {
+  *this = std::move(move_from);
 }
 
-StatusWord::StatusWord(AgentSW) {
-  CHECK_ZERO(Ghost::GetStatusWordInfo(GHOST_AGENT, GHOST_THIS_CPU, &sw_info_));
-  sw_ = status_word_from_info(&sw_info_);
-  owner_ = Gtid::Current();
-}
-
-StatusWord::StatusWord(Gtid gtid, ghost_sw_info sw_info) {
-  sw_info_ = sw_info;
-  sw_ = status_word_from_info(&sw_info_);
-  owner_ = gtid;
-}
-
-void StatusWord::Free() {
+void LocalStatusWord::Free() {
   CHECK(!empty());
   CHECK(can_free());
 
@@ -128,8 +130,7 @@ bool Ghost::GhostIsMountedAt(const char* path) {
 
   mntent* ent;
   while ((ent = getmntent(mounts))) {
-    if (!strcmp(Ghost::kGhostfsMount, ent->mnt_dir) &&
-        !strcmp("ghost", ent->mnt_type)) {
+    if (!strcmp(path, ent->mnt_dir) && !strcmp("ghost", ent->mnt_type)) {
       ret = true;
       break;
     }
@@ -174,6 +175,7 @@ int Ghost::GetSupportedVersions(std::vector<uint32_t>& versions) {
 
 // static
 int Ghost::gbl_ctl_fd_ = -1;
+int Ghost::gbl_dir_fd_ = -1;
 // static
 StatusWordTable* Ghost::gbl_sw_table_;
 
@@ -239,36 +241,24 @@ void GhostSignals::AddHandler(int signal, std::function<bool(int)> handler) {
   handlers_[signal].push_back(std::move(handler));
 }
 
-// For various glibc reasons, this isn't available in glibc/grte.  Including
-// uapi/sched.h or sched/types.h will run into conflicts on sched_param.
-struct sched_attr {
-  uint32_t size;
-  uint32_t sched_policy;
-  uint64_t sched_flags;
-  int32_t sched_nice;
-  uint32_t sched_priority;  // overloaded for is/is not an agent
-  uint64_t sched_runtime;   // overloaded for enclave ctl fd
-  uint64_t sched_deadline;
-  uint64_t sched_period;
-};
-#define SCHED_FLAG_RESET_ON_FORK 0x01
-
-// Magic values encoded in 'sched_attr.sched_priority' to indicate whether
-// a task is a normal ghost task or an agent.
-#define GHOST_SCHED_TASK_PRIO   0
-#define GHOST_SCHED_AGENT_PRIO  1
-
-int SchedTaskEnterGhost(pid_t pid, int ctl_fd) {
-  sched_attr attr = {
-      .size = sizeof(sched_attr),
-      .sched_policy = SCHED_GHOST,
-      .sched_priority = GHOST_SCHED_TASK_PRIO,
-  };
-  if (ctl_fd == -1) {
-    ctl_fd = Ghost::GetGlobalEnclaveCtlFd();
+int SchedTaskEnterGhost(pid_t pid, int dir_fd) {
+  if (dir_fd == -1) {
+    dir_fd = Ghost::GetGlobalEnclaveDirFd();
   }
-  attr.sched_runtime = ctl_fd;
-  const int ret = syscall(__NR_sched_setattr, pid, &attr, /*flags=*/0);
+  // If the open/close of tasks is a performance problem, we can have the caller
+  // open it for us.
+  int tasks_fd = openat(dir_fd, "tasks", O_WRONLY);
+  if (tasks_fd < 0) {
+    return -1;
+  }
+  std::string pid_s = std::to_string(pid);
+  int ret = 0;
+  if (write(tasks_fd, pid_s.c_str(), pid_s.length()) != pid_s.length()) {
+    ret = -1;
+  }
+  int old_errno = errno;
+  close(tasks_fd);
+  errno = old_errno;
   // We used to "Trust but verify" that pid was in ghost.  However, it's
   // possible that the syscall succeeded, but the enclave was immediately
   // destroyed, and our task is back in CFS already.
@@ -276,24 +266,21 @@ int SchedTaskEnterGhost(pid_t pid, int ctl_fd) {
 }
 
 int SchedAgentEnterGhost(int ctl_fd, int queue_fd) {
-  sched_attr attr = {
-      .size = sizeof(sched_attr),
-      .sched_policy = SCHED_GHOST,
-      // We don't want to leak ghOSt threads into the agent address space.
-      .sched_flags = SCHED_FLAG_RESET_ON_FORK,
-      .sched_priority = GHOST_SCHED_AGENT_PRIO,
-  };
-  attr.sched_runtime = ctl_fd;
-  attr.sched_deadline = queue_fd;
-  const int ret = syscall(__NR_sched_setattr, 0, &attr, /*flags=*/0);
-  if (!ret) {
+  std::string cmd = absl::StrCat("become agent ", queue_fd);
+  ssize_t ret = write(ctl_fd, cmd.c_str(), cmd.length());
+  if (ret == cmd.length()) {
     CHECK_EQ(sched_getscheduler(0), SCHED_GHOST | SCHED_RESET_ON_FORK);
+    return 0;
   }
   return ret;
 }
 
-// Returns the ctlfd for some enclave that is accepting tasks.
-static int FindActiveEnclave() {
+// Returns the ctlfd and dirfd for some enclave that is accepting tasks.
+struct ctl_dir {
+  int ctl;
+  int dir;
+};
+static ctl_dir FindActiveEnclave() {
   std::error_code ec;
   auto f = std::filesystem::directory_iterator(Ghost::kGhostfsMount, ec);
   auto end = std::filesystem::directory_iterator();
@@ -305,17 +292,21 @@ static int FindActiveEnclave() {
       while (std::getline(status, line)) {
         if (line == "active yes") {
           int ctl = open((f->path() / "ctl").string().c_str(), O_RDONLY);
-          if (ctl >= 0) return ctl;
+          if (ctl >= 0) {
+            int dir = open(f->path().string().c_str(), O_PATH);
+            CHECK_GE(dir, 0);
+            return {ctl, dir};
+          }
         }
       }
     }
   }
-  return -1;
+  return {-1, -1};
 }
 
 GhostThread::GhostThread(KernelScheduler ksched, std::function<void()> work)
     : ksched_(ksched) {
-  GhostThread::SetGlobalEnclaveCtlFdOnce();
+  GhostThread::SetGlobalEnclaveFdsOnce();
 
   thread_ = std::thread([this, w = std::move(work)] {
     tid_ = GetTID();
@@ -348,11 +339,15 @@ GhostThread::~GhostThread() { CHECK(!thread_.joinable()); }
 // transaction_test, where the same global value gets reused because we run our
 // tests from within the same process.
 // static
-void GhostThread::SetGlobalEnclaveCtlFdOnce() {
+void GhostThread::SetGlobalEnclaveFdsOnce() {
   static absl::Mutex mtx(absl::kConstInit);
   absl::MutexLock lock(&mtx);
   if (Ghost::GetGlobalEnclaveCtlFd() == -1) {
-    Ghost::SetGlobalEnclaveCtlFd(FindActiveEnclave());
+    CHECK_EQ(Ghost::GetGlobalEnclaveDirFd(), -1);
+    ctl_dir cd = FindActiveEnclave();
+    if (cd.ctl >= 0) {
+      Ghost::SetGlobalEnclaveFds(cd.ctl, cd.dir);
+    }
   }
 }
 

@@ -93,6 +93,7 @@ void Enclave::Ready() {
   for (auto scheduler : schedulers_) scheduler->EnclaveReady();
 
   InsertBpfPrograms();
+  DisableMyBpfProgLoad();
 
   // We could use agents_ here, but this allows extra checking.
   for (const Cpu& cpu : enclave_cpus_) {
@@ -353,7 +354,8 @@ void LocalEnclave::CommonInit() {
   // more than one enclave per process at a time, at least not until we have
   // fully moved away from default enclaves.
   CHECK_EQ(Ghost::GetGlobalEnclaveCtlFd(), -1);
-  Ghost::SetGlobalEnclaveCtlFd(ctl_fd_);
+  CHECK_EQ(Ghost::GetGlobalEnclaveDirFd(), -1);
+  Ghost::SetGlobalEnclaveFds(ctl_fd_, dir_fd_);
 
   CHECK_EQ(GetAbiVersion(), GHOST_VERSION);
 
@@ -428,8 +430,26 @@ void LocalEnclave::CreateAndAttachToEnclave() {
   // than nr_cpu_ids, it may silently succeed.  The kernel only checks the cpus
   // it knows about.  However, since this cpumask was constructed from a
   // topology, there should not be more than nr_cpu_ids.
-  CHECK_EQ(write(cpumask_fd, cpumask.c_str(), cpumask.length()),
-           cpumask.length());
+  constexpr int kMaxRetries = 10;
+  int retries = 0;
+  do {
+    int ret = write(cpumask_fd, cpumask.c_str(), cpumask.length());
+    if (ret == cpumask.length()) {
+      break;
+    }
+    // go/kcl/466292 always defers enclave destruction to a CFS task.
+    // This sometimes causes failures in unit tests because enclave
+    // destruction from a prior test races with enclave creation in
+    // the next one.
+    //
+    // Fix this by retrying a finite number of times as long as the
+    // reason for failure matches the race described above (EBUSY).
+    CHECK_EQ(ret, -1);
+    CHECK_EQ(errno, EBUSY);
+    absl::SleepFor(absl::Milliseconds(50));
+  } while (++retries < kMaxRetries);
+  CHECK_LT(retries, kMaxRetries);
+
   close(cpumask_fd);
 }
 
@@ -443,18 +463,10 @@ LocalEnclave::LocalEnclave(AgentConfig config)
 
   BuildCpuReps();
 
-  bool tick_on_request = false;
-  switch (config_.tick_config_) {
-    case CpuTickConfig::kNoTicks:
-    case CpuTickConfig::kTickOnRequest:
-      // kNoTicks is the same as kTickOnRequest: you just never ask for one.
-      tick_on_request = true;
-      break;
-    case CpuTickConfig::kAllTicks:
-      tick_on_request = false;
-      break;
-  };
-  CHECK_EQ(agent_bpf_init(tick_on_request), 0);
+  if (config_.tick_config_ == CpuTickConfig::kAllTicks) {
+      SetDeliverTicks(true);
+  }
+  CHECK_EQ(agent_bpf_init(), 0);
 }
 
 LocalEnclave::~LocalEnclave() {
@@ -463,9 +475,10 @@ LocalEnclave::~LocalEnclave() {
     LocalEnclave::DestroyEnclave(ctl_fd_);
   }
   close(ctl_fd_);
+  close(dir_fd_);
   // agent_test has some cases where it creates new enclaves within the same
   // process, so reset the global enclave ghost variables
-  Ghost::SetGlobalEnclaveCtlFd(-1);
+  Ghost::SetGlobalEnclaveFds(-1, -1);
   delete Ghost::GetGlobalStatusWordTable();
   Ghost::SetGlobalStatusWordTable(nullptr);
 }
@@ -557,7 +570,7 @@ bool LocalEnclave::CompleteRunRequest(RunRequest* req) {
   // N.B. we must do this even if we call Ghost::Commit() because the
   // the request could be committed asynchronously even in that case.
   while (!req->committed()) {
-    asm volatile("pause");
+    Pause();
   }
 
   ghost_txn_state state = req->state();
@@ -602,7 +615,8 @@ bool LocalEnclave::CompleteRunRequest(RunRequest* req) {
       ABSL_FALLTHROUGH_INTENDED;
 
     default:
-      GHOST_ERROR("unexpected state after commit: %d", state);
+      GHOST_ERROR("unexpected state after commit: %s",
+                  RunRequest::StateToString(state));
       return false;  // ERROR needs no-return annotation.
   }
   return false;
@@ -668,7 +682,7 @@ void RunRequest::Open(const RunRequestOptions& options) {
   // Wait for current owner to relinquish ownership of the sync_group txn.
   if (options.sync_group_owner != kSyncGroupNotOwned) {
     while (sync_group_owned()) {
-      asm volatile("pause");
+      Pause();
     }
   } else {
     CHECK(!sync_group_owned());
@@ -708,6 +722,58 @@ bool RunRequest::Abort() {
   }
   // This transaction has already committed.
   return false;
+}
+
+// static
+std::string RunRequest::StateToString(ghost_txn_state state) {
+  switch (state) {
+    case GHOST_TXN_COMPLETE:
+      return "GHOST_TXN_COMPLETE";
+    case GHOST_TXN_ABORTED:
+      return "GHOST_TXN_ABORTED";
+    case GHOST_TXN_TARGET_ONCPU:
+      return "GHOST_TXN_TARGET_ONCPU";
+    case GHOST_TXN_TARGET_STALE:
+      return "GHOST_TXN_TARGET_STALE";
+    case GHOST_TXN_TARGET_NOT_FOUND:
+      return "GHOST_TXN_TARGET_NOT_FOUND";
+    case GHOST_TXN_TARGET_NOT_RUNNABLE:
+      return "GHOST_TXN_TARGET_NOT_RUNNABLE";
+    case GHOST_TXN_AGENT_STALE:
+      return "GHOST_TXN_AGENT_STALE";
+    case GHOST_TXN_CPU_OFFLINE:
+      return "GHOST_TXN_CPU_OFFLINE";
+    case GHOST_TXN_CPU_UNAVAIL:
+      return "GHOST_TXN_CPU_UNAVAIL";
+    case GHOST_TXN_INVALID_FLAGS:
+      return "GHOST_TXN_INVALID_FLAGS";
+    case GHOST_TXN_INVALID_TARGET:
+      return "GHOST_TXN_INVALID_TARGET";
+    case GHOST_TXN_NOT_PERMITTED:
+      return "GHOST_TXN_NOT_PERMITTED";
+    case GHOST_TXN_INVALID_CPU:
+      return "GHOST_TXN_INVALID_CPU";
+    case GHOST_TXN_NO_AGENT:
+      return "GHOST_TXN_NO_AGENT";
+    case GHOST_TXN_UNSUPPORTED_VERSION:
+      return "GHOST_TXN_UNSUPPORTED_VERSION";
+    case GHOST_TXN_POISONED:
+      return "GHOST_TXN_POISONED";
+    case GHOST_TXN_READY:
+      return "GHOST_TXN_READY";
+    default: {
+      // Note that the topology may have fewer than `MAX_CPUS` CPUs, so a
+      // "SUCCESSFUL_COMMIT" below could actually be an error case. For example,
+      // if the state is `75` and the toplogy only has 64 CPUs, then
+      // "SUCCESSFUL_COMMIT_ON_CPU_75" will be returned because `MAX_CPUS` is
+      // `512` but this state is actually an unexpected state.
+      if (state >= 0 && state < MAX_CPUS) {
+        return absl::StrCat("SUCCESSFUL_COMMIT_ON_CPU_", state);
+      } else {
+        return absl::StrCat("UNKNOWN_COMMIT_STATE_", state);
+      }
+    }
+  }
 }
 
 }  // namespace ghost

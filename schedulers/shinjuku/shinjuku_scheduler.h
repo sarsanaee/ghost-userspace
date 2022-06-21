@@ -301,7 +301,7 @@ class ShinjukuScheduler : public BasicDispatchScheduler<ShinjukuTask> {
   CpuState cpu_states_[MAX_CPUS];
 
   std::atomic<int32_t> global_cpu_;
-  Channel global_channel_;
+  LocalChannel global_channel_;
   int num_tasks_ = 0;
   bool in_discovery_ = false;
 
@@ -324,10 +324,10 @@ std::unique_ptr<ShinjukuScheduler> SingleThreadShinjukuScheduler(
 
 // Operates as the Global or Satellite agent depending on input from the
 // global_scheduler->GetGlobalCPU callback.
-class ShinjukuAgent : public Agent {
+class ShinjukuAgent : public LocalAgent {
  public:
   ShinjukuAgent(Enclave* enclave, Cpu cpu, ShinjukuScheduler* global_scheduler)
-      : Agent(enclave, cpu), global_scheduler_(global_scheduler) {}
+      : LocalAgent(enclave, cpu), global_scheduler_(global_scheduler) {}
 
   void AgentThread() override;
   Scheduler* AgentScheduler() const override { return global_scheduler_; }

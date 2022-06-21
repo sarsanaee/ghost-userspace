@@ -21,6 +21,7 @@
 
 // C++ headers
 #include <sys/mman.h>
+#include <sys/prctl.h>
 
 #include <atomic>
 #include <cstddef>
@@ -39,16 +40,14 @@ namespace ghost {
 // Implementations should override "AgentThread()".
 class Agent {
  public:
-  explicit Agent(Enclave* enclave, const Cpu& cpu)
-      : enclave_(enclave), cpu_(cpu) {}
   virtual ~Agent();
 
   // Initiates binding of *this to the constructor passed CPU.  Must call
   // StartComplete.
   // REQUIRES: AgentThread() implementation must call SignalReady().
-  void StartBegin();
+  virtual void StartBegin();
   // All methods are valid to call when StartComplete returns.
-  void StartComplete();
+  virtual void StartComplete();
   void Start() {
     StartBegin();
     StartComplete();
@@ -56,10 +55,10 @@ class Agent {
 
   // Signals Finished() and guarantees that the agent will wake to observe it.
   // REQUIRES: May only be called once, and must call TerminateComplete.
-  void TerminateBegin();
+  virtual void TerminateBegin();
   // Returns when the thread associated with *this has completed its tear-down.
   // REQUIRES: May only be called once after TerminateBegin.
-  void TerminateComplete();
+  virtual void TerminateComplete();
   void Terminate() {
     TerminateBegin();
     TerminateComplete();
@@ -83,8 +82,11 @@ class Agent {
   bool boosted_priority() const { return status_word().boosted_priority(); }
   StatusWord::BarrierToken barrier() const { return status_word().barrier(); }
   Enclave* enclave() const { return enclave_; }
+  virtual const StatusWord& status_word() const = 0;
 
  protected:
+  Agent(Enclave* enclave, const Cpu& cpu) : enclave_(enclave), cpu_(cpu) {}
+
   // Used by AgentThread() to signal that any internal, e.g. subclassed,
   // initialization is complete and that StartComplete() can return.
   void SignalReady() { ready_.Notify(); }
@@ -95,9 +97,6 @@ class Agent {
   virtual void AgentThread() = 0;
   virtual Scheduler* AgentScheduler() const { return nullptr; }
 
-  const StatusWord& status_word() const { return status_word_; }
-
- private:
   void WaitForExitNotification() {
     CHECK(Finished());
     do_exit_.WaitForNotification();
@@ -106,12 +105,11 @@ class Agent {
   void EnclaveReady() { enclave_ready_.Notify(); }
 
   Enclave* const enclave_;
-  void ThreadBody();
+  virtual void ThreadBody() = 0;
 
   Gtid gtid_;
   Cpu cpu_;
   Notification ready_, finished_, enclave_ready_, do_exit_;
-  StatusWord status_word_;
 
   std::thread thread_;
 
@@ -122,6 +120,19 @@ class Agent {
   static const bool kVersionCheck;
 
   friend class Enclave;
+};
+
+class LocalAgent : public Agent {
+ public:
+  LocalAgent(Enclave* enclave, const Cpu& cpu) : Agent(enclave, cpu) {}
+  ~LocalAgent() override { status_word_.Free(); }
+
+  const StatusWord& status_word() const override { return status_word_; }
+
+ private:
+  void ThreadBody() override;
+
+  LocalStatusWord status_word_;
 };
 
 // A buffer that may be used within the RPC shared memory region to transmit
@@ -276,10 +287,10 @@ struct AgentRpcResponse {
 //
 // Most agents operate on a LocalEnclave (i.e. the kernel ABI), but you can
 // replace that with any Enclave
-template <class EnclaveType = LocalEnclave>
+template <class EnclaveType = LocalEnclave, class AgentConfigType = AgentConfig>
 class FullAgent {
  public:
-  explicit FullAgent(AgentConfig config) : enclave_(config) {
+  explicit FullAgent(AgentConfigType config) : enclave_(config) {
     Ghost::InitCore();
   }
   virtual ~FullAgent() {
@@ -365,7 +376,7 @@ inline To agent_down_cast(From* f) {
 // the actual FullAgent.  The parent can communicate with the child via a shared
 // memory region.  The primary mechanism for communication is a hand-rolled RPC
 // system, built on top of Notifications.
-template <class FULL_AGENT, class AGENT_CONFIG>
+template <class FullAgentType, class AgentConfigType>
 class AgentProcess {
  public:
   // This helper class is a blob of shared memory for sync between parent and
@@ -404,7 +415,7 @@ class AgentProcess {
     Notification agent_ready_;  // child to parent
     Notification kill_agent_;   // parent to child
 
-    // Simple RPC channel, passed to FULL_AGENT's Rpc() method.
+    // Simple RPC channel, passed to FullAgentType's Rpc() method.
     // Parent posts request, then notifies rpc_pending_.
     // Child posts response, then notifies rpc_done_.
     int64_t rpc_req_;
@@ -419,18 +430,21 @@ class AgentProcess {
 
   // Note the forked child's 'main' thread, which is in CFS, will never leave
   // the constructor.  It will create its own agent tasks.
-  explicit AgentProcess(AGENT_CONFIG config) {
+  explicit AgentProcess(AgentConfigType config) {
     sb_ = absl::make_unique<SharedBlob>();
 
-    agent_proc_ = absl::make_unique<ForkedProcess>(config.stderr_fd);
+    agent_proc_ = absl::make_unique<ForkedProcess>(config.stderr_fd_);
     if (!agent_proc_->IsChild()) {
       sb_->agent_ready_.WaitForNotification();
       return;
     }
 
-    CHECK_EQ(mlockall(MCL_CURRENT | MCL_FUTURE), 0);
+    if (config.mlockall_) {
+      CHECK_EQ(mlockall(MCL_CURRENT | MCL_FUTURE), 0);
+    }
 
-    full_agent_ = absl::make_unique<FULL_AGENT>(config);
+    full_agent_ = absl::make_unique<FullAgentType>(config);
+    CHECK_EQ(prctl(PR_SET_NAME, "ap_child"), 0);
 
     GhostSignals::IgnoreCommon();
 
@@ -442,6 +456,7 @@ class AgentProcess {
     // thread for the RPCs for our derived class FullAgents and let this thread
     // handle ready/kill for the AgentProcess.
     auto rpc_handler = std::thread([this]() {
+      CHECK_EQ(prctl(PR_SET_NAME, "ap_rpc"), 0);
       for (;;) {
         sb_->rpc_pending_.WaitForNotification();
         sb_->rpc_pending_.Reset();
@@ -512,7 +527,7 @@ class AgentProcess {
   std::unique_ptr<ForkedProcess> agent_proc_;
 
   // only set in child, nullptr in parent
-  std::unique_ptr<FULL_AGENT> full_agent_;
+  std::unique_ptr<FullAgentType> full_agent_;
 
   // set in both
   std::unique_ptr<SharedBlob> sb_ ABSL_GUARDED_BY(rpc_mutex_);
