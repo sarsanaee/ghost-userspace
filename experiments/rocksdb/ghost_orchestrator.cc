@@ -100,24 +100,20 @@ GhostOrchestrator::GhostOrchestrator(Orchestrator::Options opts)
     InitPrioTable();
   }
   
+  // Question1: How to wait here?
+  //
   // Set the affinity
   const std::vector<ghost::Gtid> gtids = thread_pool().GetGtids();
   ghost::CpuList cpus = ghost::MachineTopology()->EmptyCpuList();
 
-  for (size_t i = 1; i < gtids.size(); i++) {
-    // I'm not sure why I'm getting the affinity first!
-    ghost::Ghost::SchedGetAffinity(gtids[i], cpus);
-
-    // Clear all the bits
-    for (size_t j = 0; j < cpus.Size(); j++) {
-      cpus.Clear(j);
-    }
-
-    // Only set one bit
-    cpus.Set(i);
-
+  // Question2: Should we account for the global scheduler?
+  for (size_t i = 0; i < gtids.size(); i++) {
     // Set the affinity
-    ghost::Ghost::SchedSetAffinity(gtids[i], cpus);
+    cpus.Set(i + 11); // in this experiment 11 is the global scheduler's core
+    // Why does the size of the cpu set increases? is that OK?
+    // CHECK_EQ(ghost::Ghost::SchedSetAffinity(gtids[i], cpus), 0);
+    fprintf(stderr, "gtids %ld %d\n", gtids[i].id(), cpus.Size());
+    // Question 3: Why does the size of CPU list changeS?
   }
 
   threads_ready_.Notify();

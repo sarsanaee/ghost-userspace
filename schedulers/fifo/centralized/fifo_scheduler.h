@@ -78,6 +78,8 @@ struct FifoTask : public Task<> {
   // Whether the last execution was preempted or not.
   bool preempted = false;
   bool prio_boost = false;
+
+  CpuList mask = MachineTopology()->EmptyCpuList();
 };
 
 class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
