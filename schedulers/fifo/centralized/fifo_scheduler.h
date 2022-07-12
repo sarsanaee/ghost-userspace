@@ -100,6 +100,7 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
   void TaskYield(FifoTask* task, const Message& msg);
   void TaskBlocked(FifoTask* task, const Message& msg);
   void TaskPreempted(FifoTask* task, const Message& msg);
+  void TaskAffinityChanged(FifoTask* task, const Message& msg);
 
   // Handles cpu "not idle" message. Currently a nop.
   void CpuNotIdle(const Message& msg);

@@ -104,8 +104,6 @@ void FifoScheduler::TaskNew(FifoTask* task, const Message& msg) {
   const ghost_msg_payload_task_new* payload =
       static_cast<const ghost_msg_payload_task_new*>(msg.payload());
 
-  CpuList cpus = MachineTopology()->EmptyCpuList();
-
   task->seqnum = msg.seqnum();
   task->run_state = FifoTask::RunState::kBlocked;
 
@@ -115,33 +113,26 @@ void FifoScheduler::TaskNew(FifoTask* task, const Message& msg) {
     Enqueue(task);
   }
 
-  // Checking the affinity for the workers of Darc
-  Ghost::SchedGetAffinity(gtid, cpus);
+  num_tasks_++;
+}
 
-  // Question 4: the content is not exactly what I want when I check the new tasks
+void FifoScheduler::TaskAffinityChanged(FifoTask* task, const Message& msg) {
+  const ghost_msg_payload_task_new* payload =
+      static_cast<const ghost_msg_payload_task_new*>(msg.payload());
+
+  CpuList cpus = MachineTopology()->EmptyCpuList();
+  const Gtid gtid(payload->gtid);
+  CHECK_EQ(Ghost::SchedGetAffinity(gtid, cpus), 0);
   task->mask = cpus;
-  absl::FPrintF(stderr, "ghost global agent task %d\n", gtid.id());
 
-  // for(size_t i = 0; i < task->mask.Size(); i++) {
-  //   
-  //   if (task->mask[i].id() == 12 && cpus.IsSet(task->mask[i].id())) {
-  //     absl::FPrintF(stderr, "cpu id %d, task %d is SET\n",task->mask[i].id(),  gtid.id());
-  //     // CHECK(0);
-  //   } else if (task->mask[i].id() == 13 && cpus.IsSet(task->mask[i].id())) {
-  //     absl::FPrintF(stderr, "cpu id %d, task %d is SET\n", task->mask[i].id(), gtid.id());
-  //     // CHECK(0);
-  //   } else if (task->mask[i].id() == 14 && cpus.IsSet(task->mask[i].id())) {
-  //     absl::FPrintF(stderr, "cpu id %d, task %d is SET\n", task->mask[i].id(), gtid.id());
-  //     // CHECK(0);
-  //   } else if (task->mask[i].id() == 15 && cpus.IsSet(task->mask[i].id())) {
-  //     absl::FPrintF(stderr, "cpu id %d, task %d is SET\n", task->mask[i].id(), gtid.id());
-  //     // CHECK(0);
-  //   } else {
-  //     absl::FPrintF(stderr, "for gtid %d affinity is not set yet - mask size %ld \n", gtid.id(), task->mask.Size()); 
-  //   }
+  GHOST_DPRINT(3, stderr, "FifoSchedule: TaskAffinityChanged %d %s\n", gtid.id(), task->mask.CpuMaskStr());
+
+  // absl::FPrintF(stderr, "TaskAffinityChanged %d %s\n", gtid.id(), task->mask.CpuMaskStr());
+
+  // if (cpus.IsSet(11) || cpus.IsSet(12) || cpus.IsSet(13) || cpus.IsSet(14) || cpus.IsSet(15)) {
+  //   absl::FPrintF(stderr, "in the if statement %d %s\n", gtid.id(), task->mask.CpuMaskStr());
   // }
 
-  num_tasks_++;
 }
 
 void FifoScheduler::TaskRunnable(FifoTask* task, const Message& msg) {
@@ -320,32 +311,8 @@ void FifoScheduler::GlobalSchedule(const StatusWord& agent_sw,
       continue;
     }
 
-    // absl::FPrintF(stderr, "%s\n", available.CpuMaskStr());
-
     // Assign `next` to run on the CPU at the front of `available`.
-
-
     const Cpu& next_cpu = available.Front();
-
-    CpuList list = next->mask;
-    int shouldbe = 0;
-    bool flag = false;
-    // for (const Cpu& cpu : list) {
-    for(size_t i = 0; i < list.Size(); i++) {
-      if (list.IsSet(i)) {
-        // absl::FPrintF(stderr, "we have a set %d\n", list[i].id());
-        if (list[i].id() != next_cpu.id()) {
-          shouldbe = list[i].id();
-          flag = true;
-          break;
-        }
-      }
-      i++;
-    }
-
-    // if (flag)
-    //   absl::FPrintF(stderr, "it has intersection scheduled on %d should be scheduled on %d\n", next_cpu.id(), shouldbe);
-
     CpuState* cs = cpu_state(next_cpu);
     cs->current = next;
     available.Clear(next_cpu);

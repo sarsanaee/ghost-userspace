@@ -379,7 +379,6 @@ cc_library(
     name = "fifo_centralized_scheduler",
     srcs = [
         "schedulers/fifo/centralized/fifo_scheduler.cc",
-        "schedulers/fifo/centralized/fifo_scheduler.h",
     ],
     hdrs = [
         "schedulers/fifo/centralized/fifo_scheduler.h",
