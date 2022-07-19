@@ -138,6 +138,7 @@ def CopyBinaries(paths: Paths):
   CopyBinary(tmp.name + "/com_google_ghost/rocksdb", paths.rocksdb)
   CopyBinary(tmp.name + "/com_google_ghost/antagonist", paths.antagonist)
   CopyBinary(tmp.name + "/com_google_ghost/agent_shinjuku", paths.ghost)
+  CopyBinary(tmp.name + "/com_google_ghost/agent_biff", paths.ghost_bpf)
   tmp.cleanup()
 
 

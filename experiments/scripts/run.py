@@ -57,6 +57,7 @@ class Experiment:
       set to `None`.
     ghost: The ghOSt options, if ghOSt should run. If not (because CFS is
       running), set to `None`.
+    bpf: Enables BPF ghost agenet only for centralized_scheduler
   """
   throughputs: List[int] = field(default_factory=lambda: list)
   output_prefix: str = "/tmp/ghost_data"
@@ -64,7 +65,7 @@ class Experiment:
   rocksdb: RocksDBOptions = RocksDBOptions()
   antagonist: Optional[AntagonistOptions] = None
   ghost: Optional[GhostOptions] = None
-
+  bpf: Optional[bool] = False
 
 @dataclass
 class AppHandles:
@@ -118,6 +119,7 @@ def CheckBinaries(experiment: Experiment) -> bool:
   antagonist = not experiment.antagonist or os.path.exists(
       experiment.binaries.antagonist)
   ghost = not experiment.ghost or os.path.exists(experiment.binaries.ghost)
+  ghost_bpf = not experiment.bpf or os.path.exists(experiment.binaries.ghost_bpf)
   return rocksdb and antagonist and ghost
 
 
@@ -264,6 +266,9 @@ def GhostArgs(experiment: Experiment):
   """
   if not experiment.ghost:
     raise ValueError("ghOSt has not been configured.")
+
+  if experiment.bpf:
+    return [experiment.binaries.ghost_bpf]
 
   return [experiment.binaries.ghost] + DataClassToArgs(experiment.ghost)
 
@@ -521,6 +526,7 @@ def Run(experiment: Experiment):
     print("Running CFS experiments...")
 
   SetUp(experiment.binaries)
+  #TODO: this needs an update for ghost BPF
   if not CheckBinaries(experiment):
     raise ValueError("One or more of the binaries does not exist.")
   SetUpOutputDirectory(experiment)

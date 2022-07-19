@@ -28,6 +28,7 @@ from experiments.scripts.options import GetGhostOptions
 from experiments.scripts.options import GetRocksDBOptions
 from experiments.scripts.options import Scheduler
 from experiments.scripts.run import Experiment
+from experiments.scripts.options import GhostWaitType
 from experiments.scripts.run import Run
 
 _NUM_CPUS = 8
@@ -50,7 +51,7 @@ def RunCfs():
   Run(e)
 
 
-def RunGhost():
+def RunGhost(bpf = False):
   """Runs the ghOSt experiment."""
   e: Experiment = Experiment()
   # Run throughputs 10000, 20000, 30000, ..., 420000.
@@ -60,20 +61,26 @@ def RunGhost():
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
   e.rocksdb.get_exponential_mean = '1us'
   e.antagonist = None
+
+  # Enabling/Disabling BPF ghost agent
+  e.bpf = bpf
+
+  # Ghost BPF does not accept any parameters from the user at this point
+  # However, the number of ghost threads is set here!
   e.ghost = GetGhostOptions(_NUM_CPUS)
+
   # There is no time-based preemption for centralized queuing, so set the
   # preemption time slice to infinity.
   e.ghost.preemption_time_slice = 'inf'
 
   Run(e)
 
-
 def main(argv: Sequence[str]):
-  if len(argv) > 3:
+  if len(argv) > 4:
     raise app.UsageError('Too many command-line arguments.')
   elif len(argv) == 1:
     raise app.UsageError(
-        'No experiment specified. Pass `cfs` and/or `ghost` as arguments.')
+        'No experiment specified. Pass `cfs` and/or `ghost` and/or `ghost_bpf`  as arguments.')
 
   # First check that all of the command line arguments are valid.
   if not CheckSchedulers(argv[1:]):
@@ -84,10 +91,12 @@ def main(argv: Sequence[str]):
     scheduler = Scheduler(argv[i])
     if scheduler == Scheduler.CFS:
       RunCfs()
-    else:
-      if scheduler != Scheduler.GHOST:
-        raise ValueError(f'Unknown scheduler {scheduler}.')
+    elif scheduler == Scheduler.GHOST:
       RunGhost()
+    elif scheduler == Scheduler.GHOST_BPF:
+      RunGhost(True)
+    else:
+      raise ValueError(f'Unknown scheduler {scheduler}.')
 
 
 if __name__ == '__main__':

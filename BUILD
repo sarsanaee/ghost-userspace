@@ -241,6 +241,7 @@ cc_binary(
         "schedulers/biff/agent_biff.cc",
     ],
     copts = compiler_flags,
+    visibility = ["//experiments/scripts:__pkg__"],
     deps = [
         ":agent",
         ":biff_scheduler",

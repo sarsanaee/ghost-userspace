@@ -48,6 +48,7 @@ class Scheduler(str, enum.Enum):
   """
   CFS = "cfs"
   GHOST = "ghost"
+  GHOST_BPF = "ghost_bpf"
 
 
 def CheckSchedulers(schedulers: List[str]) -> bool:
@@ -114,6 +115,7 @@ class Paths:
   rocksdb: str = os.path.join(TMPFS_MOUNT, "rocksdb")
   antagonist: str = os.path.join(TMPFS_MOUNT, "antagonist")
   ghost: str = os.path.join(TMPFS_MOUNT, "agent_shinjuku")
+  ghost_bpf: str = os.path.join(TMPFS_MOUNT, "agent_biff")
 
 
 def GetDefaultRocksDBWorkerCpus():
@@ -267,7 +269,6 @@ class GhostOptions:
   # infinity. Some scheduling algorithms do not have time-based preemption, so
   # scheduling algorithms that do have it should explicitly turn this on.
   preemption_time_slice: str = "inf"
-
 
 def GetBinaryPaths():
   """Returns the paths to each of the binaries."""

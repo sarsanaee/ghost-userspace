@@ -17,6 +17,7 @@ py_library(
         "setup.py",
     ],
     data = [
+        "//:agent_biff",
         "//:agent_shinjuku",
         "//:antagonist",
         "//:rocksdb",
