@@ -70,6 +70,25 @@ cc_library(
 )
 
 cc_binary(
+    name = "agent_cfs",
+    srcs = [
+        "schedulers/cfs/cfs_agent.cc",
+        "schedulers/cfs/cfs_scheduler.cc",
+        "schedulers/cfs/cfs_scheduler.h",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":agent",
+        ":base",
+        ":shared",
+        "@com_google_absl//absl/debugging:symbolize",
+        "@com_google_absl//absl/flags:parse",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+cc_binary(
     name = "agent_exp",
     srcs = [
         "schedulers/edf/agent_exp.cc",
@@ -160,6 +179,31 @@ cc_binary(
         ":ghost",
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_binary(
+    name = "simple_exp",
+    srcs = [
+        "tests/simple_exp.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":base",
+        ":ghost",
+    ],
+)
+
+cc_binary(
+    name = "simple_edf",
+    srcs = [
+        "tests/simple_edf.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":ghost",
+        ":shared",
+        "@com_google_absl//absl/flags:parse",
     ],
 )
 
