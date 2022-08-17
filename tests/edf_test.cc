@@ -97,25 +97,6 @@ void SetupWorkClasses(PrioTable* table) {
   wc->period = absl::ToInt64Nanoseconds(absl::Milliseconds(100));
 }
 
-void SpinFor(absl::Duration d) {
-  while (d > absl::ZeroDuration()) {
-    absl::Time a = absl::Now();
-    absl::Time b;
-
-    // Try to minimize the contribution of arithmetic/Now() overhead.
-    for (int i = 0; i < 150; ++i) {
-      b = absl::Now();
-    }
-
-    absl::Duration t = b - a;
-
-    // Don't count preempted time
-    if (t < absl::Microseconds(100)) {
-      d -= t;
-    }
-  }
-}
-
 class EdfTest : public testing::Test {
  protected:
   // SetUpTestSuite runs once for the entire test suite.  We don't use the usual
@@ -173,7 +154,9 @@ TEST_F(EdfTest, Simple) {
     return 0;
   });
 
-  ASSERT_EQ(fp.WaitForChildExit(), 0);
+  // Not checking return value because the child could have already exited
+  // in which case WaitForChildExit() would return a "failure".
+  fp.WaitForChildExit();
 }
 
 // If we keep the tests all in the same process, then this is a good check
@@ -192,7 +175,7 @@ TEST_F(EdfTest, SimpleAgain) {
     return 0;
   });
 
-  ASSERT_EQ(fp.WaitForChildExit(), 0);
+  fp.WaitForChildExit();
 }
 
 TEST_F(EdfTest, SimpleMany) {
@@ -235,7 +218,7 @@ TEST_F(EdfTest, SimpleMany) {
     }
     return 0;
   });
-  ASSERT_EQ(fp.WaitForChildExit(), 0);
+  fp.WaitForChildExit();
 }
 
 TEST_F(EdfTest, SimpleRepeatable) {
@@ -260,7 +243,7 @@ TEST_F(EdfTest, SimpleRepeatable) {
 
     return 0;
   });
-  ASSERT_EQ(fp.WaitForChildExit(), 0);
+  fp.WaitForChildExit();
 }
 
 TEST_F(EdfTest, BusyRunFor) {
@@ -291,7 +274,7 @@ TEST_F(EdfTest, BusyRunFor) {
 
     return 0;
   });
-  ASSERT_EQ(fp.WaitForChildExit(), 0);
+  fp.WaitForChildExit();
 }
 
 }  // namespace

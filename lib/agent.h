@@ -23,6 +23,7 @@
 #include <sys/mman.h>
 #include <sys/prctl.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <functional>
@@ -180,6 +181,15 @@ struct AgentRpcBuffer {
     }
   }
 
+  void SerializeString(absl::string_view s) {
+    CHECK_LE(s.size(), BufferBytes - 1);
+    std::transform(s.begin(), s.end(), std::begin(data), [](char c) {
+      return std::byte(c);
+    });
+    // null terminator
+    data[s.size()] = std::byte(0);
+  }
+
   // See comment above for `Serialize<T>(const T& t, size_t size)`. This
   // function does the same thing but assumes that the size of `T` is
   // `sizeof(T)`. In some cases, such as array pointers, this is not true. In
@@ -241,6 +251,10 @@ struct AgentRpcBuffer {
     T t;
     Deserialize<T>(t, sizeof(T));
     return t;
+  }
+
+  std::string DeserializeString() const {
+    return std::string(reinterpret_cast<const char*>(&data[0]));
   }
 
   // This is a region where arbitrary bytes of data can be written (ie. when the
@@ -376,6 +390,19 @@ inline To agent_down_cast(From* f) {
 // the actual FullAgent.  The parent can communicate with the child via a shared
 // memory region.  The primary mechanism for communication is a hand-rolled RPC
 // system, built on top of Notifications.
+//
+// We fork a separate process for the FullAgent in order to keep the agent
+// process as slim as possible, isolating it from any random threads that may be
+// in the current process. This reduces (but does not completely eliminate) the
+// chance of an agent thread becoming blocked on a resource held by a non-agent
+// thread. In most cases that will simply lead to scheduling delays. However,
+// if the thread being waited on is a ghost-client thread, then deadlock may
+// occur. So, the rules of thumb are:
+// - ghost-client threads should never exist in the same process as the ghost
+// agents
+// - Use of non-agents in the agent process should be minimized if possible.
+// - If non-agents do exist in the same process as agents, then care should be
+// taken to minimize resource dependencies between them, such as shared mutexes.
 template <class FullAgentType, class AgentConfigType>
 class AgentProcess {
  public:

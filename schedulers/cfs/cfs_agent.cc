@@ -1,4 +1,4 @@
-// Copyright 2021 Google LLC
+// Copyright 2022 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,46 +14,28 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/debugging/symbolize.h"
 #include "absl/flags/parse.h"
 #include "lib/agent.h"
-#include "lib/channel.h"
 #include "lib/enclave.h"
-#include "lib/topology.h"
-#include "schedulers/edf/edf_scheduler.h"
+#include "schedulers/cfs/cfs_scheduler.h"
 
 ABSL_FLAG(std::string, ghost_cpus, "1-5", "cpulist");
-ABSL_FLAG(
-    int32_t, globalcpu, -1,
-    "Global cpu. If -1, then defaults to the lowest CPU in <ghost_cpus>)");
-ABSL_FLAG(bool, ticks, false, "Generate cpu tick messages");
 ABSL_FLAG(std::string, enclave, "", "Connect to preexisting enclave directory");
 
 namespace ghost {
 
-void ParseGlobalConfig(GlobalConfig* config) {
+static void ParseAgentConfig(AgentConfig* config) {
   CpuList ghost_cpus =
       ghost::MachineTopology()->ParseCpuStr(absl::GetFlag(FLAGS_ghost_cpus));
-  // One CPU for the spinning global agent and at least one other for running
-  // scheduled ghOSt tasks.
-  CHECK_GE(ghost_cpus.Size(), 2);
-
-  int globalcpu = absl::GetFlag(FLAGS_globalcpu);
-  if (globalcpu < 0) {
-    CHECK_EQ(globalcpu, -1);
-    globalcpu = ghost_cpus.Front().id();
-  }
-  CHECK(ghost_cpus.IsSet(globalcpu));
+  CHECK(!ghost_cpus.Empty());
 
   Topology* topology = MachineTopology();
   config->topology_ = topology;
   config->cpus_ = ghost_cpus;
-  config->global_cpu_ = topology->cpu(globalcpu);
-  config->edf_ticks_ = absl::GetFlag(FLAGS_ticks) ? CpuTickConfig::kAllTicks
-                                                  : CpuTickConfig::kNoTicks;
-
   std::string enclave = absl::GetFlag(FLAGS_enclave);
   if (!enclave.empty()) {
     int fd = open(enclave.c_str(), O_PATH);
@@ -71,27 +53,16 @@ int main(int argc, char* argv[]) {
   ghost::set_verbose(1);
   absl::ParseCommandLine(argc, argv);
 
-  ghost::GlobalConfig config;
-  ghost::ParseGlobalConfig(&config);
-
-  printf("Core map\n");
-
-  int n = 0;
-  for (const ghost::Cpu& c : config.topology_->all_cores()) {
-    printf("( ");
-    for (const ghost::Cpu& s : c.siblings()) printf("%2d ", s.id());
-    printf(")%c", ++n % 8 == 0 ? '\n' : '\t');
-  }
-  printf("\n");
+  ghost::AgentConfig config;
+  ghost::ParseAgentConfig(&config);
 
   printf("Initializing...\n");
 
   // Using new so we can destruct the object before printing Done
-  auto uap = new ghost::AgentProcess<ghost::GlobalEdfAgent<ghost::LocalEnclave>,
-                                     ghost::GlobalConfig>(config);
+  auto uap = new ghost::AgentProcess<ghost::FullCfsAgent<ghost::LocalEnclave>,
+                                     ghost::AgentConfig>(config);
 
   ghost::Ghost::InitCore();
-
   printf("Initialization complete, ghOSt active.\n");
   // When `stdout` is directed to a terminal, it is newline-buffered. When
   // `stdout` is directed to a non-interactive device (e.g, a Python subprocess
@@ -101,27 +72,20 @@ int main(int argc, char* argv[]) {
   fflush(stdout);
 
   ghost::Notification exit;
-  static bool first = true;
   ghost::GhostSignals::AddHandler(SIGINT, [&exit](int) {
+    static bool first = true;  // We only modify the first SIGINT.
+
     if (first) {
       exit.Notify();
       first = false;
-      return false;  // We'll exit on subsequent signals.
-    }
-    return true;
-  });
-  ghost::GhostSignals::AddHandler(SIGTERM, [&exit](int) {
-    if (first) {
-      exit.Notify();
-      first = false;
-      return false;  // We'll exit on subsequent signals.
+      return false;  // We'll exit on subsequent SIGTERMs.
     }
     return true;
   });
 
   // TODO: this is racy - uap could be deleted already
   ghost::GhostSignals::AddHandler(SIGUSR1, [uap](int) {
-    uap->Rpc(ghost::EdfScheduler::kDebugRunqueue);
+    uap->Rpc(ghost::CfsScheduler::kDebugRunqueue);
     return false;
   });
 
@@ -130,5 +94,6 @@ int main(int argc, char* argv[]) {
   delete uap;
 
   printf("\nDone!\n");
+
   return 0;
 }

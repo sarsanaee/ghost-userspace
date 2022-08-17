@@ -70,6 +70,25 @@ cc_library(
 )
 
 cc_binary(
+    name = "agent_cfs",
+    srcs = [
+        "schedulers/cfs/cfs_agent.cc",
+        "schedulers/cfs/cfs_scheduler.cc",
+        "schedulers/cfs/cfs_scheduler.h",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":agent",
+        ":base",
+        ":shared",
+        "@com_google_absl//absl/debugging:symbolize",
+        "@com_google_absl//absl/flags:parse",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+cc_binary(
     name = "agent_exp",
     srcs = [
         "schedulers/edf/agent_exp.cc",
@@ -163,6 +182,31 @@ cc_binary(
     ],
 )
 
+cc_binary(
+    name = "simple_exp",
+    srcs = [
+        "tests/simple_exp.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":base",
+        ":ghost",
+    ],
+)
+
+cc_binary(
+    name = "simple_edf",
+    srcs = [
+        "tests/simple_edf.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":ghost",
+        ":shared",
+        "@com_google_absl//absl/flags:parse",
+    ],
+)
+
 cc_test(
     name = "agent_test",
     size = "small",
@@ -232,6 +276,61 @@ cc_test(
         ":base",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_binary(
+    name = "agent_biff",
+    srcs = [
+        "schedulers/biff/agent_biff.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":agent",
+        ":biff_scheduler",
+        "@com_google_absl//absl/debugging:symbolize",
+        "@com_google_absl//absl/flags:parse",
+    ],
+)
+
+bpf_skeleton(
+    name = "biff_bpf_skel",
+    bpf_object = "//third_party/bpf:biff_bpf",
+    skel_hdr = "schedulers/biff/biff_bpf.skel.h",
+)
+
+cc_library(
+    name = "biff_scheduler",
+    srcs = [
+        "schedulers/biff/biff_scheduler.cc",
+    ],
+    hdrs = [
+        "schedulers/biff/biff_bpf.skel.h",
+        "schedulers/biff/biff_scheduler.h",
+        "//third_party/bpf:biff_bpf.h",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":agent",
+        ":ghost",
+        ":shared",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:bind_front",
+        "@com_google_absl//absl/strings:str_format",
+        "@linux//:libbpf",
+    ],
+)
+
+cc_test(
+    name = "biff_test",
+    size = "small",
+    srcs = [
+        "tests/biff_test.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":biff_scheduler",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -441,6 +540,19 @@ cc_library(
     deps = [
         ":base",
         "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_binary(
+    name = "enclave_watcher",
+    srcs = [
+        "util/enclave_watcher.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":agent",
+        ":ghost",
+        "@com_google_absl//absl/flags:parse",
     ],
 )
 
