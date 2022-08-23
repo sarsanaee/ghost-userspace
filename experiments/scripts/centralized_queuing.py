@@ -29,11 +29,12 @@ from experiments.scripts.options import GetRocksDBOptions
 from experiments.scripts.options import Scheduler
 from experiments.scripts.run import Experiment
 from experiments.scripts.options import GhostWaitType
+from experiments.scripts.options import CfsWaitType
 from experiments.scripts.run import Run
 
-_NUM_CPUS = 8
+_NUM_CPUS = 9
 _NUM_CFS_WORKERS = _NUM_CPUS - 2
-_NUM_GHOST_WORKERS = 11
+_NUM_GHOST_WORKERS = 200 
 
 
 def RunCfs():
@@ -45,6 +46,8 @@ def RunCfs():
   e.throughputs.extend(list(i for i in range(450000, 481000, 1000)))
   e.rocksdb = GetRocksDBOptions(Scheduler.CFS, _NUM_CPUS, _NUM_CFS_WORKERS)
   e.rocksdb.get_exponential_mean = '1us'
+  # just for testing
+  e.rocksdb.cfs_wait_type = CfsWaitType.FUTEX
   e.antagonist = None
   e.ghost = None
 
@@ -58,8 +61,12 @@ def RunGhost(bpf = False):
   e.throughputs = list(i for i in range(10000, 421000, 10000))
   # Toward the end, run throughputs 430000, 431000, 432000, ..., 460000.
   e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
+  e.throughputs = [100000] # added
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
+  # e.rocksdb.experiment_duration = '60s' # added 
   e.rocksdb.get_exponential_mean = '1us'
+  # We are using shinjuku as the ghost scheduler here
+  e.rocksdb.ghost_wait_type = GhostWaitType.FUTEX if bpf else GhostWaitType.PRIO_TABLE
   e.antagonist = None
 
   # Enabling/Disabling BPF ghost agent
