@@ -128,6 +128,24 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
     global_cpu_.store(cpu.id(), std::memory_order_release);
   }
 
+  void EnterSchedule() {
+    CHECK_EQ(schedule_timer_start_, absl::UnixEpoch());
+    schedule_timer_start_ = ghost::MonotonicNow();
+  }
+
+  absl::Duration SchedulingOverhead() {
+    absl::Duration ret = schedule_durations_ / iterations_;
+    schedule_durations_ = absl::ZeroDuration();
+    return ret;
+  }
+
+  void ExitSchedule() {
+    CHECK_NE(schedule_timer_start_, absl::UnixEpoch());
+    schedule_durations_ += ghost::MonotonicNow() - schedule_timer_start_;
+    schedule_timer_start_ = absl::UnixEpoch();
+    ++iterations_;
+  }
+
   // When a different scheduling class (e.g., CFS) has a task to run on the
   // global agent's CPU, the global agent calls this function to try to pick a
   // new CPU to move to and, if a new CPU is found, to initiate the handoff
@@ -141,6 +159,7 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
   std::atomic<bool> debug_runqueue_ = false;
 
   static const int kDebugRunqueue = 1;
+  static const int kGetSchedOverhead = 2;
 
  private:
   struct CpuState {
@@ -269,6 +288,10 @@ class FullFifoAgent : public FullAgent<EnclaveType> {
       case FifoScheduler::kDebugRunqueue:
         global_scheduler_->debug_runqueue_ = true;
         response.response_code = 0;
+        return;
+      case FifoScheduler::kGetSchedOverhead:
+        response.response_code = absl::ToInt64Nanoseconds(
+            global_scheduler_->SchedulingOverhead());
         return;
       default:
         response.response_code = -1;

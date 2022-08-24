@@ -458,7 +458,11 @@ void FifoAgent::AgentThread() {
         global_channel.Consume(msg);
       }
 
+      global_scheduler_->EnterSchedule();
+
       global_scheduler_->GlobalSchedule(status_word(), agent_barrier);
+
+      global_scheduler_->ExitSchedule();
 
       if (verbose() && debug_out.Edge()) {
         static const int flags =

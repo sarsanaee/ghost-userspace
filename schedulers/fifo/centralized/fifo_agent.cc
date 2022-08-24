@@ -47,6 +47,9 @@ void ParseFifoConfig(FifoConfig* config) {
   }
   CHECK(ghost_cpus.IsSet(globalcpu));
 
+  // ghost_cpus.Clear(10); // We need this only if we need more cores cuz
+  // the workload generator is on this core.
+
   Topology* topology = MachineTopology();
   config->topology_ = topology;
   config->cpus_ = ghost_cpus;
@@ -109,6 +112,8 @@ int main(int argc, char* argv[]) {
   });
 
   exit.WaitForNotification();
+
+  fprintf(stderr, "%ld nsecs\n", uap->Rpc(ghost::FifoScheduler::kGetSchedOverhead));
 
   delete uap;
 
