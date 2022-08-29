@@ -78,10 +78,10 @@ struct hist {
 
 enum {
 	PNT_END_TO_END,
-    PNT_POP_ELEMENT,
-    PNT_TXN,
-    PNT_ENQ_EBUSY,
-    PNT_RQ_EMPTY,
+        PNT_POP_ELEMENT,
+        PNT_TXN,
+        PNT_ENQ_EBUSY,
+        PNT_RQ_EMPTY,
 	NR_HISTS,
 };
 

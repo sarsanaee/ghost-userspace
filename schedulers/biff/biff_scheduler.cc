@@ -23,6 +23,7 @@
 #include "libbpf/bpf.h"
 #include "libbpf/libbpf.h"
 
+// C STYLE
 #define handle_error(msg) \
         do { perror(msg); exit(-1); } while (0)
 
@@ -67,6 +68,8 @@ static void print_hists(int fd)
 	free(hist);
 }
 
+// C STYLE ENDED
+
 namespace ghost {
 
 BiffScheduler::BiffScheduler(Enclave* enclave, CpuList cpulist,
@@ -101,10 +104,7 @@ BiffScheduler::BiffScheduler(Enclave* enclave, CpuList cpulist,
 }
 
 BiffScheduler::~BiffScheduler() {
-  // if(cpu().id()==0)
-      // print_hists(bpf_map__fd(biff_sched_->bpf_obj_->maps.hists));
   print_hists(bpf_map__fd(bpf_obj_->maps.hists));
-  // fprintf(stderr, "ttesting\n");
 
   bpf_map__munmap(bpf_obj_->maps.cpu_data, bpf_cpu_data_);
   bpf_map__munmap(bpf_obj_->maps.sw_data, bpf_sw_data_);
@@ -133,8 +133,6 @@ void BiffAgentTask::AgentThread() {
     req->LocalYield(status_word().barrier(), /*flags=*/0);
   }
 
-  // if(cpu().id()==0)
-  //     print_hists(bpf_map__fd(biff_sched_->bpf_obj_->maps.hists));
 }
 
 }  //  namespace ghost
