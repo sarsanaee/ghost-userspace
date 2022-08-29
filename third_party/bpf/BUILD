@@ -27,6 +27,7 @@ bpf_program(
         "biff_bpf.h",
         "common.bpf.h",
         "//:kernel/vmlinux_ghost_5_11.h",
+        "//third_party:iovisor_bcc/bits.bpf.h",
     ],
     bpf_object = "biff_bpf.o",
 )

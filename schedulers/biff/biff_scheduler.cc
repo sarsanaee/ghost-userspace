@@ -16,6 +16,56 @@
 
 #include "absl/strings/str_format.h"
 #include "bpf/user/agent.h"
+#include <stdlib.h>
+
+// Let's see if this works at all!
+#include "third_party/iovisor_bcc/trace_helpers.h"
+#include "libbpf/bpf.h"
+#include "libbpf/libbpf.h"
+
+#define handle_error(msg) \
+        do { perror(msg); exit(-1); } while (0)
+
+static const char *titles[] = {
+	[PNT_END_TO_END] = "PNT end to end latency",
+	[PNT_POP_ELEMENT] = "PNT pop element latency",
+	[PNT_TXN] = "PNT transaction submission latency",
+	[PNT_ENQ_EBUSY] = "PNT transaction EBUSY, pop+push",
+	[PNT_RQ_EMPTY] = "PNT BPF runq empty",
+	// [LATCHED_TO_RUN] = "Latency from Latched to Run",
+	// [RUNNABLE_TO_RUN] = "Latency from Runnable to Run",
+};
+
+static void print_hists(int fd)
+{
+	unsigned int nr_cpus = libbpf_num_possible_cpus();
+	struct hist *hist;
+	uint32_t total[MAX_NR_HIST_SLOTS];
+
+	/*
+	 * There are NR_HISTS members of the PERCPU_ARRAY.  Each one we read is
+	 * an *array[nr_cpus]* of the struct hist, one for each cpu.  This
+	 * differs from a accessing an element from within a BPF program, where
+	 * we only get the percpu element.
+	 */
+	hist = static_cast<struct hist*>(calloc(nr_cpus, sizeof(struct hist)));
+	if (!hist)
+		handle_error("calloc");
+
+	for (int i = 0; i < NR_HISTS; i++) {
+		if (bpf_map_lookup_elem(fd, &i, hist))
+			handle_error("lookup");
+		memset(total, 0, sizeof(total));
+		for (int c = 0; c < nr_cpus; c++) {
+			for (int s = 0; s < MAX_NR_HIST_SLOTS; s++)
+				total[s] += hist[c].slots[s];
+		}
+		fprintf(stderr, "\n%s:\n----------\n", titles[i]);
+		print_log2_hist(total, MAX_NR_HIST_SLOTS, "usec");
+	}
+
+	free(hist);
+}
 
 namespace ghost {
 
@@ -51,6 +101,11 @@ BiffScheduler::BiffScheduler(Enclave* enclave, CpuList cpulist,
 }
 
 BiffScheduler::~BiffScheduler() {
+  // if(cpu().id()==0)
+      // print_hists(bpf_map__fd(biff_sched_->bpf_obj_->maps.hists));
+  print_hists(bpf_map__fd(bpf_obj_->maps.hists));
+  // fprintf(stderr, "ttesting\n");
+
   bpf_map__munmap(bpf_obj_->maps.cpu_data, bpf_cpu_data_);
   bpf_map__munmap(bpf_obj_->maps.sw_data, bpf_sw_data_);
   biff_bpf__destroy(bpf_obj_);
@@ -77,6 +132,9 @@ void BiffAgentTask::AgentThread() {
     RunRequest* req = enclave()->GetRunRequest(cpu());
     req->LocalYield(status_word().barrier(), /*flags=*/0);
   }
+
+  // if(cpu().id()==0)
+  //     print_hists(bpf_map__fd(biff_sched_->bpf_obj_->maps.hists));
 }
 
 }  //  namespace ghost

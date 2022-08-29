@@ -92,6 +92,7 @@
 #include "libbpf/bpf_tracing.h"
 // clang-format on
 
+#include "third_party/iovisor_bcc/bits.bpf.h"
 #include "third_party/bpf/biff_bpf.h"
 #include "third_party/bpf/common.bpf.h"
 
@@ -122,6 +123,14 @@ struct {
 	__uint(map_flags, BPF_F_MMAPABLE);
 } sw_data SEC(".maps");
 
+// This is only for tracing purposes
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, NR_HISTS);
+	__type(key, u32);
+	__type(value, struct hist);
+} hists SEC(".maps");
+
 /*
  * Hash map of task_sw_info, indexed by gtid, used for getting the SW info to
  * lookup the *real* per-task data: the sw_data.
@@ -144,6 +153,20 @@ struct {
 	__type(value, struct task_sw_info);
 } sw_lookup SEC(".maps");
 
+// This is for histograms
+static void increment_hist(u32 hist_id, u64 value)
+{
+	u64 slot; /* Gotta love BPF.  slot needs to be a u64, not a u32. */
+	struct hist *hist;
+
+	hist = bpf_map_lookup_elem(&hists, &hist_id);
+	if (!hist)
+		return;
+	slot = log2l(value);
+	if (slot >= MAX_NR_HIST_SLOTS)
+		slot = MAX_NR_HIST_SLOTS - 1;
+	hist->slots[slot]++;
+}
 
 /* Helper, from gtid to per-task sw_data blob */
 static struct biff_bpf_sw_data *gtid_to_swd(u64 gtid)
@@ -249,6 +272,15 @@ static void __attribute__((noinline)) set_dont_idle(struct bpf_ghost_sched *ctx)
 SEC("ghost_sched/pnt")
 int biff_pnt(struct bpf_ghost_sched *ctx)
 {
+
+    uint64_t tss = 0;
+    uint64_t pops = 0;
+    uint64_t txn = 0;
+    uint64_t enq = 0;
+    uint64_t rq_empty = 0;
+
+    tss = bpf_ktime_get_us();
+
 	struct rq_item next[1];
 	int err;
 
@@ -279,19 +311,26 @@ int biff_pnt(struct bpf_ghost_sched *ctx)
 	}
 
 	/* POLICY */
+    pops = bpf_ktime_get_us();
 	err = bpf_map_pop_elem(&global_rq, next);
 	if (err) {
 		switch (-err) {
 		case ENOENT:
+            increment_hist(PNT_RQ_EMPTY, bpf_ktime_get_us() - pops);
 			break;
 		default:
 			bpf_printk("failed to dequeue, err %d\n", err);
 		}
 		goto done;
 	}
+    increment_hist(PNT_POP_ELEMENT, bpf_ktime_get_us() - pops);
 
+    txn = bpf_ktime_get_us();
 	err = bpf_ghost_run_gtid(next->gtid, next->task_barrier,
 				 SEND_TASK_LATCHED);
+
+    increment_hist(PNT_TXN, bpf_ktime_get_us() - txn);
+
 	if (err) {
 		/* Three broad classes of error:
 		 * - ignore it
@@ -325,7 +364,9 @@ int biff_pnt(struct bpf_ghost_sched *ctx)
 			 * or resched ourselves, we'll rerun bpf-pnt after the
 			 * task got off cpu.
 			 */
+            enq = bpf_ktime_get_us();
 			enqueue_task(next->gtid, next->task_barrier);
+            increment_hist(PNT_ENQ_EBUSY, bpf_ktime_get_us() - enq);
 			break;
 		case ERANGE:
 		case EXDEV:
@@ -363,6 +404,8 @@ done:
 	 * control of cpus idling or not.
 	 */
 	ctx->dont_idle = true;
+    
+    increment_hist(PNT_END_TO_END, bpf_ktime_get_us() - tss);
 
 	return 0;
 }

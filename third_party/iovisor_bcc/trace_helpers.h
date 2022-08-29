@@ -104,7 +104,7 @@ static inline void print_log2_hist_to(FILE *to, unsigned int *vals,
 static inline void print_log2_hist(unsigned int *vals, int vals_size,
                                    const char *val_type)
 {
-	print_log2_hist_to(stdout, vals, vals_size, val_type);
+	print_log2_hist_to(stderr, vals, vals_size, val_type);
 }
 
 struct ksym {

@@ -31,11 +31,11 @@ int main(int argc, char* argv[]) {
 
   ghost::Topology* t = ghost::MachineTopology();
 
-  // ghost::CpuList ghost_cpus =
-  //    ghost::MachineTopology()->ParseCpuStr("4-44");
+  ghost::CpuList ghost_cpus =
+     ghost::MachineTopology()->ParseCpuStr("12-20");
  
-  ghost::CpuList ghost_cpus = t->all_cpus();
-  ghost_cpus.Clear(10);
+  // ghost::CpuList ghost_cpus = t->all_cpus();
+  // ghost_cpus.Clear(10);
 
   // ghost::AgentConfig config(t, t->all_cpus());
   ghost::AgentConfig config(t, ghost_cpus);

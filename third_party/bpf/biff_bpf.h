@@ -20,6 +20,9 @@
 
 #define BIFF_MAX_GTIDS 65536
 
+#define MAX_PIDS 102400
+#define MAX_NR_HIST_SLOTS 25
+ 
 /*
  * The array map of these, called `cpu_data`, can be mmapped by userspace.
  *
@@ -59,6 +62,28 @@ struct biff_bpf_sw_data {
 	uint64_t ran_until;
 	uint64_t runnable_at;
 } __attribute__((aligned(8)));
+
+/*
+ * Power of 2 histogram, <=1 us, 2us, 4us, etc.  This struct must be at least
+ * 8-byte aligned, since it is a value for a BPF map.  The kernel will round up
+ * the size of any map value to 8 bytes internally.  If we have an array of
+ * these objects, the kernel will think each object is 8-byte aligned each.
+ * When we read the per-cpu map in schedlat.c, we get an array of struct hist.
+ * The compiler needs to agree with the kernel on the size of the objects, or
+ * you'll corrupt your stats.
+ */
+struct hist {
+	uint32_t slots[MAX_NR_HIST_SLOTS];
+} __attribute__((aligned(8)));
+
+enum {
+	PNT_END_TO_END,
+    PNT_POP_ELEMENT,
+    PNT_TXN,
+    PNT_ENQ_EBUSY,
+    PNT_RQ_EMPTY,
+	NR_HISTS,
+};
 
 
 #endif  // GHOST_LIB_BPF_BPF_BIFF_BPF_H_
