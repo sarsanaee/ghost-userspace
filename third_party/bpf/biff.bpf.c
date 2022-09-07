@@ -106,6 +106,9 @@
 
 bool initialized;
 
+// int num_tasks = 0;
+__u32 num_tasks = 0;
+
 /* max_entries is patched at runtime to num_possible_cpus */
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -165,7 +168,9 @@ static void increment_hist(u32 hist_id, u64 value)
 	slot = log2l(value);
 	if (slot >= MAX_NR_HIST_SLOTS)
 		slot = MAX_NR_HIST_SLOTS - 1;
+
 	hist->slots[slot]++;
+
 }
 
 /* Helper, from gtid to per-task sw_data blob */
@@ -260,7 +265,10 @@ static void enqueue_task(u64 gtid, u32 task_barrier)
 		 * task into the queue again.
 		 */
 		bpf_printk("failed to enqueue %p, err %d\n", gtid, err);
+		// __sync_fetch_and_sub(&num_tasks, 1);
+		return;
 	}
+	__sync_fetch_and_add(&num_tasks, 1);
 }
 
 /* Avoid the dreaded "dereference of modified ctx ptr R6 off=3 disallowed" */
@@ -311,18 +319,27 @@ int biff_pnt(struct bpf_ghost_sched *ctx)
 	}
 
 	/* POLICY */
+
+	// here I tried to have some barrier! But it does not work for some reason.
+	asm volatile ("" ::: "memory");
+	if(num_tasks == 0 ) // why should we access an empty queue
+		goto done;
+
         pops = bpf_ktime_get_us();
 	err = bpf_map_pop_elem(&global_rq, next);
 	if (err) {
 		switch (-err) {
 		case ENOENT:
-                        increment_hist(PNT_RQ_EMPTY, bpf_ktime_get_us() - pops);
+			increment_hist(PNT_RQ_EMPTY, bpf_ktime_get_us() - pops);
 			break;
 		default:
 			bpf_printk("failed to dequeue, err %d\n", err);
 		}
 		goto done;
-	}
+	} 
+
+	__sync_fetch_and_sub(&num_tasks, 1);
+
         increment_hist(PNT_POP_ELEMENT, bpf_ktime_get_us() - pops);
 
         txn = bpf_ktime_get_us();
