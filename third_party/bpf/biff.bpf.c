@@ -281,13 +281,13 @@ SEC("ghost_sched/pnt")
 int biff_pnt(struct bpf_ghost_sched *ctx)
 {
 
-        uint64_t tss = 0;
-        uint64_t pops = 0;
-        uint64_t txn = 0;
-        uint64_t enq = 0;
-        uint64_t rq_empty = 0;
+        // uint64_t tss = 0;
+        // uint64_t pops = 0;
+        // uint64_t txn = 0;
+        // uint64_t enq = 0;
+        // uint64_t rq_empty = 0;
         
-        tss = bpf_ktime_get_us();
+        // tss = bpf_ktime_get_us();
         
 	struct rq_item next[1];
 	int err;
@@ -325,12 +325,12 @@ int biff_pnt(struct bpf_ghost_sched *ctx)
 	if(num_tasks == 0 ) // why should we access an empty queue
 		goto done;
 
-        pops = bpf_ktime_get_us();
+        // pops = bpf_ktime_get_us();
 	err = bpf_map_pop_elem(&global_rq, next);
 	if (err) {
 		switch (-err) {
 		case ENOENT:
-			increment_hist(PNT_RQ_EMPTY, bpf_ktime_get_us() - pops);
+			// increment_hist(PNT_RQ_EMPTY, bpf_ktime_get_us() - pops);
 			break;
 		default:
 			bpf_printk("failed to dequeue, err %d\n", err);
@@ -340,13 +340,13 @@ int biff_pnt(struct bpf_ghost_sched *ctx)
 
 	__sync_fetch_and_sub(&num_tasks, 1);
 
-        increment_hist(PNT_POP_ELEMENT, bpf_ktime_get_us() - pops);
+        // increment_hist(PNT_POP_ELEMENT, bpf_ktime_get_us() - pops);
 
-        txn = bpf_ktime_get_us();
+        // txn = bpf_ktime_get_us();
 	err = bpf_ghost_run_gtid(next->gtid, next->task_barrier,
 				 SEND_TASK_LATCHED);
 
-        increment_hist(PNT_TXN, bpf_ktime_get_us() - txn);
+        // increment_hist(PNT_TXN, bpf_ktime_get_us() - txn);
 
 	if (err) {
 		/* Three broad classes of error:
@@ -381,9 +381,9 @@ int biff_pnt(struct bpf_ghost_sched *ctx)
 			 * or resched ourselves, we'll rerun bpf-pnt after the
 			 * task got off cpu.
 			 */
-                        enq = bpf_ktime_get_us();
+                        // enq = bpf_ktime_get_us();
 			enqueue_task(next->gtid, next->task_barrier);
-                        increment_hist(PNT_ENQ_EBUSY, bpf_ktime_get_us() - enq);
+                        // increment_hist(PNT_ENQ_EBUSY, bpf_ktime_get_us() - enq);
 			break;
 		case ERANGE:
 		case EXDEV:
@@ -422,7 +422,7 @@ done:
 	 */
 	ctx->dont_idle = true;
     
-        increment_hist(PNT_END_TO_END, bpf_ktime_get_us() - tss);
+        // increment_hist(PNT_END_TO_END, bpf_ktime_get_us() - tss);
 
 	return 0;
 }
