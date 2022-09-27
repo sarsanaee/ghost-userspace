@@ -28,7 +28,7 @@ from dataclasses import field
 from dataclasses import fields
 
 _NUM_ROCKSDB_WORKERS = 6
-_FIRST_CPU = 10
+_FIRST_CPU = 2 
 # The first two CPUs are used for the load generator and either the dispatcher
 # (for CFS) or the global agent (for ghOSt).
 _FIRST_ROCKSDB_WORKER_CPU = _FIRST_CPU + 2

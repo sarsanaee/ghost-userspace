@@ -267,8 +267,9 @@ def GhostArgs(experiment: Experiment):
   if not experiment.ghost:
     raise ValueError("ghOSt has not been configured.")
 
+  # Now that interface is similar I should not need different code path for BPF
   if experiment.bpf:
-    return [experiment.binaries.ghost_bpf]
+    return [experiment.binaries.ghost_bpf] + DataClassToArgs(experiment.ghost)
 
   return [experiment.binaries.ghost] + DataClassToArgs(experiment.ghost)
 
@@ -288,7 +289,7 @@ def StartApp(args: List[str], cgroup: str):
   """
   CreateCgroup(cgroup)
   app = subprocess.Popen(args, stdout=subprocess.PIPE)
-  print(args)
+  # print(args)
   MoveProcessToCgroup(cgroup, app.pid)
   return app
 

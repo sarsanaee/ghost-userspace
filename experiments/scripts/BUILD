@@ -24,6 +24,19 @@ py_library(
     ],
 )
 
+# Runs the bpf scalability experiments.
+par_binary(
+    name = "bpf_core_scalability",
+    srcs = [
+        "bpf_core_scalability.py",
+    ],
+    python_version = "PY3",
+    deps = [
+        ":experiments",
+        requirement("absl-py"),
+    ],
+)
+
 # Runs the centralized queuing experiments.
 par_binary(
     name = "centralized_queuing",
