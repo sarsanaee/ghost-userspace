@@ -40,6 +40,12 @@ static long (*bpf_ghost_resched_cpu)(__u32 cpu, __u64 cpu_seqnum) = (void *) 300
 #define TASK_RUNNING 0
 #define TASK_DEAD 0x0080
 
+
+static inline u32 get_cpu(void)
+{
+  return bpf_get_smp_processor_id();
+}
+
 static inline u64 min(u64 x, u64 y)
 {
   if (x < y)
