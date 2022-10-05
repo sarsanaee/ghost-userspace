@@ -288,6 +288,30 @@ struct {
 	__type(value, struct rq_item);
 } global_rq_7 SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_8 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_9 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_10 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_11 SEC(".maps");
+
 /* POLICY */
 static void enqueue_task(u64 gtid, u32 task_barrier)
 {
@@ -308,37 +332,68 @@ static void enqueue_task(u64 gtid, u32 task_barrier)
 
 
         // Alireza
-        d_mapper = get_cpu() % 8;
+        d_mapper = get_cpu();
 	// bpf_printk("core running our shit %d\n", d_mapper);
-        switch (d_mapper) {
-                case 0:
-                        err = bpf_map_push_elem(&global_rq_0, p, 0);
-                        break;
-                case 1:
-                        err = bpf_map_push_elem(&global_rq_1, p, 0);
-                        break;
-                case 2:
-                        err = bpf_map_push_elem(&global_rq_2, p, 0);
-                        break;
-                case 3:
-                        err = bpf_map_push_elem(&global_rq_3, p, 0);
-                        break;
-                case 4:
-                        err = bpf_map_push_elem(&global_rq_4, p, 0);
-                        break;
-                case 5:
-                        err = bpf_map_push_elem(&global_rq_5, p, 0);
-                        break;
-                case 6:
-                        err = bpf_map_push_elem(&global_rq_6, p, 0);
-                        break;
-                case 7:
-                        err = bpf_map_push_elem(&global_rq_7, p, 0);
-                        break;
-                default:
-                        err = bpf_map_push_elem(&global_rq, p, 0);
-                        break;
-        }
+        //
+
+        // if (d_mapper < 4) 
+        //         err = bpf_map_push_elem(&global_rq_0, p, 0);
+        if (d_mapper < 8)
+                 err = bpf_map_push_elem(&global_rq_1, p, 0);
+        // else if (d_mapper < 12)
+        //         err = bpf_map_push_elem(&global_rq_2, p, 0);
+        else if (d_mapper < 16)
+                err = bpf_map_push_elem(&global_rq_3, p, 0);
+        // else if (d_mapper < 20)
+        //         err = bpf_map_push_elem(&global_rq_4, p, 0);
+        else if (d_mapper < 24)
+                 err = bpf_map_push_elem(&global_rq_5, p, 0);
+        // else if (d_mapper < 28)
+        //         err = bpf_map_push_elem(&global_rq_6, p, 0);
+        else if (d_mapper < 32)
+                err = bpf_map_push_elem(&global_rq_7, p, 0);
+        // else if (d_mapper < 36)
+        //         err = bpf_map_push_elem(&global_rq_8, p, 0);
+        else if (d_mapper < 40)
+                 err = bpf_map_push_elem(&global_rq_9, p, 0);
+        // else if (d_mapper < 44)
+        //         err = bpf_map_push_elem(&global_rq_10, p, 0);
+        else if (d_mapper < 48)
+                err = bpf_map_push_elem(&global_rq_11, p, 0);
+        else
+                bpf_printk("failed to find a right group: %d, %p, err %d\n",
+                                d_mapper, gtid, err);
+
+
+        // switch (d_mapper) {
+        //         case 0:
+        //                 err = bpf_map_push_elem(&global_rq_0, p, 0);
+        //                 break;
+        //         case 1:
+        //                 err = bpf_map_push_elem(&global_rq_1, p, 0);
+        //                 break;
+        //         case 2:
+        //                 err = bpf_map_push_elem(&global_rq_2, p, 0);
+        //                 break;
+        //         case 3:
+        //                 err = bpf_map_push_elem(&global_rq_3, p, 0);
+        //                 break;
+        //         case 4:
+        //                 err = bpf_map_push_elem(&global_rq_4, p, 0);
+        //                 break;
+        //         case 5:
+        //                 err = bpf_map_push_elem(&global_rq_5, p, 0);
+        //                 break;
+        //         case 6:
+        //                 err = bpf_map_push_elem(&global_rq_6, p, 0);
+        //                 break;
+        //         case 7:
+        //                 err = bpf_map_push_elem(&global_rq_7, p, 0);
+        //                 break;
+        //         default:
+        //                 err = bpf_map_push_elem(&global_rq, p, 0);
+        //                 break;
+        // }
 
         // err = bpf_map_push_elem(&global_rq, p, 0);
 	if (err) {
@@ -414,39 +469,66 @@ int biff_pnt(struct bpf_ghost_sched *ctx)
         // pops = bpf_ktime_get_us();
 	// err = bpf_map_pop_elem(&global_rq, next);
         // Alireza
-        d_mapper = get_cpu() % 8;
+        d_mapper = get_cpu();
 	// bpf_printk("pick next task! core running our shit %d\n", d_mapper);
-	err = bpf_map_pop_elem(&global_rq, next);
+	// err = bpf_map_pop_elem(&global_rq, next);
+        
+        // if (d_mapper < 4) 
+	//         err = bpf_map_pop_elem(&global_rq_0, next);
+        if (d_mapper < 8)
+	         err = bpf_map_pop_elem(&global_rq_1, next);
+        // else if (d_mapper < 12)
+	//         err = bpf_map_pop_elem(&global_rq_2, next);
+        else if (d_mapper < 16)
+	        err = bpf_map_pop_elem(&global_rq_3, next);
+        // else if (d_mapper < 20)
+	//         err = bpf_map_pop_elem(&global_rq_4, next);
+        else if (d_mapper < 24)
+	         err = bpf_map_pop_elem(&global_rq_5, next);
+        // else if (d_mapper < 28)
+	//        err = bpf_map_pop_elem(&global_rq_6, next);
+        else if (d_mapper < 32)
+	        err = bpf_map_pop_elem(&global_rq_7, next);
+        // else if (d_mapper < 36)
+	//         err = bpf_map_pop_elem(&global_rq_8, next);
+        else if (d_mapper < 40)
+	         err = bpf_map_pop_elem(&global_rq_9, next);
+        // else if (d_mapper < 44)
+	//         err = bpf_map_pop_elem(&global_rq_10, next);
+        else if (d_mapper < 48)
+	        err = bpf_map_pop_elem(&global_rq_11, next);
+        else
+                bpf_printk("dequeue: couldn't find a group: %d\n", d_mapper);
 
-        switch (d_mapper) {
-                case 0:
-                        err = bpf_map_pop_elem(&global_rq_0, next);
-                        break;
-                case 1:
-                        err = bpf_map_pop_elem(&global_rq_1, next);
-                        break;
-                case 2:
-                        err = bpf_map_pop_elem(&global_rq_2, next);
-                        break;
-                case 3:
-                        err = bpf_map_pop_elem(&global_rq_3, next);
-                        break;
-                case 4:
-                        err = bpf_map_pop_elem(&global_rq_4, next);
-                        break;
-                case 5:
-                        err = bpf_map_pop_elem(&global_rq_5, next);
-                        break;
-                case 6:
-                        err = bpf_map_pop_elem(&global_rq_6, next);
-                        break;
-                case 7:
-                        err = bpf_map_pop_elem(&global_rq_7, next);
-                        break;
-                default:
-	                bpf_printk("pick next task! core running our shit %d\n", d_mapper);
-	                err = bpf_map_pop_elem(&global_rq, next);
-        }
+        // switch (d_mapper) {
+        //         case 0:
+        //                 err = bpf_map_pop_elem(&global_rq_0, next);
+        //                 break;
+        //         case 1:
+        //                 err = bpf_map_pop_elem(&global_rq_1, next);
+        //                 break;
+        //         case 2:
+        //                 err = bpf_map_pop_elem(&global_rq_2, next);
+        //                 break;
+        //         case 3:
+        //                 err = bpf_map_pop_elem(&global_rq_3, next);
+        //                 break;
+        //         case 4:
+        //                 err = bpf_map_pop_elem(&global_rq_4, next);
+        //                 break;
+        //         case 5:
+        //                 err = bpf_map_pop_elem(&global_rq_5, next);
+        //                 break;
+        //         case 6:
+        //                 err = bpf_map_pop_elem(&global_rq_6, next);
+        //                 break;
+        //         case 7:
+        //                 err = bpf_map_pop_elem(&global_rq_7, next);
+        //                 break;
+        //         default:
+	//                 bpf_printk("pick next task! core running our shit %d\n", d_mapper);
+	//                 err = bpf_map_pop_elem(&global_rq, next);
+        // }
 
 	if (err) {
 		switch (-err) {

@@ -33,16 +33,17 @@ from experiments.scripts.run import Run
 _NUM_CPUS = 10
 _NUM_CFS_WORKERS = _NUM_CPUS - 2
 _NUM_GHOST_WORKERS = 200 
-_NUM_CPU_RANGE_LIST = [4, 8, 16, 32, 45]
+_NUM_CPU_RANGE_LIST = [4, 8, 16, 32, 48]
 
 
 def RunGhost(bpf = False):
   """Runs the ghOSt experiment."""
   e: Experiment = Experiment()
   # Run throughputs 10000, 20000, 30000, ..., 420000.
-  e.throughputs = list(i for i in range(10000, 421000, 10000))
+  # e.throughputs = list(i for i in range(10000, 421000, 10000))
+  e.throughputs = list(i for i in range(10000, 300000, 10000))
   # Toward the end, run throughputs 430000, 431000, 432000, ..., 460000.
-  e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
+  # e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
   e.rocksdb.get_exponential_mean = '1us'
   # We are using shinjuku as the ghost scheduler here
