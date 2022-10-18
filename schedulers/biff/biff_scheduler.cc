@@ -106,6 +106,8 @@ BiffScheduler::BiffScheduler(Enclave* enclave, CpuList cpulist,
 BiffScheduler::~BiffScheduler() {
   print_hists(bpf_map__fd(bpf_obj_->maps.hists));
 
+  fprintf(stderr, "number of handoffs %d\n", READ_ONCE(bpf_obj_->bss->hand_off));
+
   bpf_map__munmap(bpf_obj_->maps.cpu_data, bpf_cpu_data_);
   bpf_map__munmap(bpf_obj_->maps.sw_data, bpf_sw_data_);
   biff_bpf__destroy(bpf_obj_);

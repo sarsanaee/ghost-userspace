@@ -90,6 +90,7 @@
 #include "kernel/vmlinux_ghost_5_11.h"
 #include "libbpf/bpf_helpers.h"
 #include "libbpf/bpf_tracing.h"
+
 // clang-format on
 
 #include "third_party/iovisor_bcc/bits.bpf.h"
@@ -104,9 +105,76 @@
  */
 #define SEND_TASK_LATCHED (1 << 10)
 
+// typedef __u8  __attribute__((__may_alias__))  __u8_alias_t;
+// typedef __u16 __attribute__((__may_alias__)) __u16_alias_t;
+// typedef __u32 __attribute__((__may_alias__)) __u32_alias_t;
+// typedef __u64 __attribute__((__may_alias__)) __u64_alias_t;
+// 
+// static __always_inline void __read_once_size(const volatile void *p, void *res, int size)
+// {
+// 	switch (size) {
+// 	case 1: *(__u8_alias_t  *) res = *(volatile __u8_alias_t  *) p; break;
+// 	case 2: *(__u16_alias_t *) res = *(volatile __u16_alias_t *) p; break;
+// 	case 4: *(__u32_alias_t *) res = *(volatile __u32_alias_t *) p; break;
+// 	case 8: *(__u64_alias_t *) res = *(volatile __u64_alias_t *) p; break;
+// 	default:
+// 		asm volatile ("" : : : "memory");
+// 		__builtin_memcpy((void *)res, (const void *)p, size);
+// 		asm volatile ("" : : : "memory");
+// 	}
+// }
+// 
+// static __always_inline void __write_once_size(volatile void *p, void *res, int size)
+// {
+// 	switch (size) {
+// 	case 1: *(volatile  __u8_alias_t *) p = *(__u8_alias_t  *) res; break;
+// 	case 2: *(volatile __u16_alias_t *) p = *(__u16_alias_t *) res; break;
+// 	case 4: *(volatile __u32_alias_t *) p = *(__u32_alias_t *) res; break;
+// 	case 8: *(volatile __u64_alias_t *) p = *(__u64_alias_t *) res; break;
+// 	default:
+// 		asm volatile ("" : : : "memory");
+// 		__builtin_memcpy((void *)p, (const void *)res, size);
+// 		asm volatile ("" : : : "memory");
+// 	}
+// }
+// 
+// #define READ_ONCE(x)					\
+// ({							\
+// 	union { typeof(x) __val; char __c[1]; } __u =	\
+// 		{ .__c = { 0 } };			\
+// 	__read_once_size(&(x), __u.__c, sizeof(x));	\
+// 	__u.__val;					\
+// })
+// 
+// #define WRITE_ONCE(x, val)				\
+// ({							\
+// 	union { typeof(x) __val; char __c[1]; } __u =	\
+// 		{ .__val = (val) }; 			\
+// 	__write_once_size(&(x), __u.__c, sizeof(x));	\
+// 	__u.__val;					\
+// })
+// 
+#define PERIOD 1000
+
+#define CHECK_BIT(var,pos) ((var) = (var) | (1<<(pos)))
+// #define CHECK_BIT(var,pos) (__sync_fetch_and_and(var, (1<<(pos))))
+// #define SET_BIT(var,pos) ((var) = (var) | (1<<(pos)))
+#define SET_BIT(var,pos) (__sync_fetch_and_or(&var, (1<<(pos))))
+#define CLEAR_BIT(var,pos) (__sync_fetch_and_and(&var, (1<<(pos))))
+
 bool initialized;
 
 __u32 num_tasks = 0;
+__u64 hand_off = 0;
+__u64 ts0 = 0;
+__u64 ts1 = 0;
+__u64 ts2 = 0;
+__u64 ts3 = 0;
+__u64 ts4 = 0;
+__u64 ts5 = 0;
+
+__u8 cpu_set = 0x00;
+
 
 /* max_entries is patched at runtime to num_possible_cpus */
 struct {
@@ -154,6 +222,13 @@ struct {
 	__type(key, u64);
 	__type(value, struct task_sw_info);
 } sw_lookup SEC(".maps");
+
+// struct {
+// 	__uint(type, BPF_MAP_TYPE_ARRAY);
+// 	__type(key, u8);
+// 	__type(value, long);
+// 	__uint(max_entries, 10);
+// } time_stamps SEC(".maps");
 
 // This is for histograms
 static void increment_hist(u32 hist_id, u64 value)
@@ -234,11 +309,11 @@ struct rq_item {
 	u32 task_barrier;
 };
 
-struct {
-	__uint(type, BPF_MAP_TYPE_QUEUE);
-	__uint(max_entries, BIFF_MAX_GTIDS);
-	__type(value, struct rq_item);
-} global_rq SEC(".maps");
+// struct {
+// 	__uint(type, BPF_MAP_TYPE_QUEUE);
+// 	__uint(max_entries, BIFF_MAX_GTIDS);
+// 	__type(value, struct rq_item);
+// } global_rq SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
@@ -269,48 +344,174 @@ struct {
 	__uint(max_entries, BIFF_MAX_GTIDS);
 	__type(value, struct rq_item);
 } global_rq_4 SEC(".maps");
-
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
 	__uint(max_entries, BIFF_MAX_GTIDS);
 	__type(value, struct rq_item);
 } global_rq_5 SEC(".maps");
-
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
 	__uint(max_entries, BIFF_MAX_GTIDS);
 	__type(value, struct rq_item);
 } global_rq_6 SEC(".maps");
-
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
 	__uint(max_entries, BIFF_MAX_GTIDS);
 	__type(value, struct rq_item);
 } global_rq_7 SEC(".maps");
-
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
 	__uint(max_entries, BIFF_MAX_GTIDS);
 	__type(value, struct rq_item);
 } global_rq_8 SEC(".maps");
-
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
 	__uint(max_entries, BIFF_MAX_GTIDS);
 	__type(value, struct rq_item);
 } global_rq_9 SEC(".maps");
-
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
 	__uint(max_entries, BIFF_MAX_GTIDS);
 	__type(value, struct rq_item);
 } global_rq_10 SEC(".maps");
-
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
 	__uint(max_entries, BIFF_MAX_GTIDS);
 	__type(value, struct rq_item);
 } global_rq_11 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_12 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_13 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_14 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_15 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_16 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_17 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_18 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_19 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_20 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_21 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_22 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_23 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_24 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_25 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_26 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_27 SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_28 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_29 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_30 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_31 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_32 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_33 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, BIFF_MAX_GTIDS);
+	__type(value, struct rq_item);
+} global_rq_34 SEC(".maps");
+
+// struct {
+// 	__uint(type, BPF_MAP_TYPE_QUEUE);
+// 	__uint(max_entries, BIFF_MAX_GTIDS);
+// 	__type(value, struct rq_item);
+// } global_rq_9 SEC(".maps");
+// 
+// struct {
+// 	__uint(type, BPF_MAP_TYPE_QUEUE);
+// 	__uint(max_entries, BIFF_MAX_GTIDS);
+// 	__type(value, struct rq_item);
+// } global_rq_11 SEC(".maps");
 
 /* POLICY */
 static void enqueue_task(u64 gtid, u32 task_barrier)
@@ -325,75 +526,29 @@ static void enqueue_task(u64 gtid, u32 task_barrier)
 	struct rq_item p[1] = {0};
 	int err;
 
-        u32 d_mapper;
+        __u32 d_mapper;
 
 	p->gtid = gtid;
 	p->task_barrier = task_barrier;
 
-
-        // Alireza
         d_mapper = get_cpu();
-	// bpf_printk("core running our shit %d\n", d_mapper);
-        //
 
-        // if (d_mapper < 4) 
-        //         err = bpf_map_push_elem(&global_rq_0, p, 0);
-        if (d_mapper < 8)
-                 err = bpf_map_push_elem(&global_rq_1, p, 0);
-        // else if (d_mapper < 12)
-        //         err = bpf_map_push_elem(&global_rq_2, p, 0);
-        else if (d_mapper < 16)
+        if (d_mapper < 8) {
+                err = bpf_map_push_elem(&global_rq_0, p, 0);
+        } else if (d_mapper < 16) {
+                err = bpf_map_push_elem(&global_rq_1, p, 0);
+        } else if (d_mapper < 24) {
+                err = bpf_map_push_elem(&global_rq_2, p, 0);
+        } else if (d_mapper < 32) {
                 err = bpf_map_push_elem(&global_rq_3, p, 0);
-        // else if (d_mapper < 20)
-        //         err = bpf_map_push_elem(&global_rq_4, p, 0);
-        else if (d_mapper < 24)
-                 err = bpf_map_push_elem(&global_rq_5, p, 0);
-        // else if (d_mapper < 28)
-        //         err = bpf_map_push_elem(&global_rq_6, p, 0);
-        else if (d_mapper < 32)
-                err = bpf_map_push_elem(&global_rq_7, p, 0);
-        // else if (d_mapper < 36)
-        //         err = bpf_map_push_elem(&global_rq_8, p, 0);
-        else if (d_mapper < 40)
-                 err = bpf_map_push_elem(&global_rq_9, p, 0);
-        // else if (d_mapper < 44)
-        //         err = bpf_map_push_elem(&global_rq_10, p, 0);
-        else if (d_mapper < 48)
-                err = bpf_map_push_elem(&global_rq_11, p, 0);
-        else
-                bpf_printk("failed to find a right group: %d, %p, err %d\n",
-                                d_mapper, gtid, err);
-
-
-        // switch (d_mapper) {
-        //         case 0:
-        //                 err = bpf_map_push_elem(&global_rq_0, p, 0);
-        //                 break;
-        //         case 1:
-        //                 err = bpf_map_push_elem(&global_rq_1, p, 0);
-        //                 break;
-        //         case 2:
-        //                 err = bpf_map_push_elem(&global_rq_2, p, 0);
-        //                 break;
-        //         case 3:
-        //                 err = bpf_map_push_elem(&global_rq_3, p, 0);
-        //                 break;
-        //         case 4:
-        //                 err = bpf_map_push_elem(&global_rq_4, p, 0);
-        //                 break;
-        //         case 5:
-        //                 err = bpf_map_push_elem(&global_rq_5, p, 0);
-        //                 break;
-        //         case 6:
-        //                 err = bpf_map_push_elem(&global_rq_6, p, 0);
-        //                 break;
-        //         case 7:
-        //                 err = bpf_map_push_elem(&global_rq_7, p, 0);
-        //                 break;
-        //         default:
-        //                 err = bpf_map_push_elem(&global_rq, p, 0);
-        //                 break;
-        // }
+        } else if (d_mapper < 40) {
+                err = bpf_map_push_elem(&global_rq_4, p, 0);
+        } else if (d_mapper < 48) {
+                err = bpf_map_push_elem(&global_rq_5, p, 0);
+        } else {
+ 		bpf_printk("Unable to find a right group %p, err %d\n", gtid, err);
+        }
+       
 
         // err = bpf_map_push_elem(&global_rq, p, 0);
 	if (err) {
@@ -404,11 +559,169 @@ static void enqueue_task(u64 gtid, u32 task_barrier)
 		 * task into the queue again.
 		 */
 		bpf_printk("failed to enqueue %p, err %d\n", gtid, err);
-		// __sync_fetch_and_sub(&num_tasks, 1);
 		return;
 	}
-	// __sync_fetch_and_add(&num_tasks, 1);
 }
+
+/* POLICY */ 
+// static void enqueue_task(u64 gtid, u32 task_barrier)
+// {
+// 	/*
+// 	 * Need to explicitly zero the entire struct, otherwise you get
+// 	 * "invalid indirect read from stack".  Explicitly setting .gtid and
+// 	 * .task_barrier in the definition (whether p is an array or just a
+// 	 * struct) isn't enough.  I guess the verifier can't tell we aren't
+// 	 * passing uninitialized stack data to some function.
+// 	 */
+// 	struct rq_item p[1] = {0};
+// 	int err;
+// 
+//         __u32 d_mapper;
+// 
+// 	p->gtid = gtid;
+// 	p->task_barrier = task_barrier;
+// 
+//         d_mapper = get_cpu();
+//         d_mapper = 0;
+//         // d_mapper = d_mapper % 8;
+// 
+//         switch(d_mapper) {
+//                 case 0:
+//                         err = bpf_map_push_elem(&global_rq_0, p, 0);
+//                         break;
+//                 case 1:
+//                         err = bpf_map_push_elem(&global_rq_1, p, 0);
+//                         break;
+//                 case 2:
+//                         err = bpf_map_push_elem(&global_rq_2, p, 0);
+//                         break;
+//                 case 3:
+//                         err = bpf_map_push_elem(&global_rq_3, p, 0);
+//                         break;
+//                 case 4:
+//                         err = bpf_map_push_elem(&global_rq_4, p, 0);
+//                         break;
+//                 case 5:
+//                         err = bpf_map_push_elem(&global_rq_5, p, 0);
+//                         break;
+//                 case 6:
+//                         err = bpf_map_push_elem(&global_rq_6, p, 0);
+//                         break;
+//                 case 7:
+//                         err = bpf_map_push_elem(&global_rq_7, p, 0);
+//                         break;
+//                 case 8:
+//                         err = bpf_map_push_elem(&global_rq_8, p, 0);
+//                         break;
+//                 case 9:
+//                         err = bpf_map_push_elem(&global_rq_9, p, 0);
+//                         break;
+//                 case 10:
+//                         err = bpf_map_push_elem(&global_rq_10, p, 0);
+//                         break;
+//                 case 11:
+//                         err = bpf_map_push_elem(&global_rq_11, p, 0);
+//                         break;
+//                 case 12:
+//                         err = bpf_map_push_elem(&global_rq_12, p, 0);
+//                         break;
+//                 case 13:
+//                         err = bpf_map_push_elem(&global_rq_13, p, 0);
+//                         break;
+//                 case 14:
+//                         err = bpf_map_push_elem(&global_rq_14, p, 0);
+//                         break;
+//                 case 15:
+//                         err = bpf_map_push_elem(&global_rq_15, p, 0);
+//                         break;
+//                 case 16:
+//                         err = bpf_map_push_elem(&global_rq_16, p, 0);
+//                         break;
+//                 case 17:
+//                         err = bpf_map_push_elem(&global_rq_17, p, 0);
+//                         break;
+//                 case 18:
+//                         err = bpf_map_push_elem(&global_rq_18, p, 0);
+//                         break;
+//                 case 19:
+//                         err = bpf_map_push_elem(&global_rq_19, p, 0);
+//                         break;
+//                 case 20:
+//                         err = bpf_map_push_elem(&global_rq_20, p, 0);
+//                         break;
+//                 case 21:
+//                         err = bpf_map_push_elem(&global_rq_21, p, 0);
+//                         break;
+//                 case 22:
+//                         err = bpf_map_push_elem(&global_rq_22, p, 0);
+//                         break;
+//                 case 23:
+//                         err = bpf_map_push_elem(&global_rq_23, p, 0);
+//                         break;
+//                 case 24:
+//                         err = bpf_map_push_elem(&global_rq_24, p, 0);
+//                         break;
+//                 case 25:
+//                         err = bpf_map_push_elem(&global_rq_25, p, 0);
+//                         break;
+//                 case 26:
+//                         err = bpf_map_push_elem(&global_rq_26, p, 0);
+//                         break;
+//                 case 27:
+//                         err = bpf_map_push_elem(&global_rq_27, p, 0);
+//                         break;
+//                 case 28:
+//                         err = bpf_map_push_elem(&global_rq_28, p, 0);
+//                         break;
+//                 case 29:
+//                         err = bpf_map_push_elem(&global_rq_29, p, 0);
+//                         break;
+//                 case 30:
+//                         err = bpf_map_push_elem(&global_rq_30, p, 0);
+//                         break;
+//                 case 31:
+//                         err = bpf_map_push_elem(&global_rq_31, p, 0);
+//                         break;
+//                 case 32:
+//                         err = bpf_map_push_elem(&global_rq_32, p, 0);
+//                         break;
+//                 case 33:
+//                         err = bpf_map_push_elem(&global_rq_33, p, 0);
+//                         break;
+//                 case 34:
+//                         err = bpf_map_push_elem(&global_rq_34, p, 0);
+//                         break;
+//                 default:
+//                         bpf_printk("failed to find a right group: %d, %p, err %d\n",
+//                                   d_mapper, gtid, err);
+// 
+// 
+//         }
+//         // else if (d_mapper < 16)
+//         //          err = bpf_map_push_elem(&global_rq_3, p, 0);
+//         // else if (d_mapper < 24)
+//         //           err = bpf_map_push_elem(&global_rq_5, p, 0);
+//         // else if (d_mapper < 40)
+//         //          err = bpf_map_push_elem(&global_rq_7, p, 0);
+//         // // else if (d_mapper < 40) 
+//         // //          err = bpf_map_push_elem(&global_rq_9, p, 0);
+//         // // else if (d_mapper < 48)
+//         // //          err = bpf_map_push_elem(&global_rq_11, p, 0);
+//         //  else
+//         
+// 
+//         // err = bpf_map_push_elem(&global_rq, p, 0);
+// 	if (err) {
+// 		/*
+// 		 * If we fail, we'll lose the task permanently.  This is where
+// 		 * it's helpful to have userspace involved, even if just epolled
+// 		 * on a bpf ring_buffer map to handle it by trying to shove the
+// 		 * task into the queue again.
+// 		 */
+// 		bpf_printk("failed to enqueue %p, err %d\n", gtid, err);
+// 		return;
+// 	}
+// }
 
 /* Avoid the dreaded "dereference of modified ctx ptr R6 off=3 disallowed" */
 static void __attribute__((noinline)) set_dont_idle(struct bpf_ghost_sched *ctx)
@@ -416,22 +729,32 @@ static void __attribute__((noinline)) set_dont_idle(struct bpf_ghost_sched *ctx)
 	ctx->dont_idle = true;
 }
 
+// static int load_balance(struct bpf_map *queue, struct rq_item *next, int err) {
+static int load_balance(void * queue, struct rq_item *next, int err, int group) {
+
+
+        u64 now = bpf_ktime_get_us();
+        u32 d_mapper = get_cpu();
+
+        // __sync_synchronize();
+        if (now - ts0 > PERIOD && !CHECK_BIT(cpu_set, group)) {
+                SET_BIT(cpu_set, group);
+	        // bpf_printk("load balancing %d\n", d_mapper);
+                err = bpf_map_pop_elem((struct bpf_map*)queue, next);
+                ts0 = now;
+                CLEAR_BIT(cpu_set, group);
+        }
+
+        return err;
+
+}
+
 SEC("ghost_sched/pnt")
 int biff_pnt(struct bpf_ghost_sched *ctx)
 {
-
-        // uint64_t tss = 0;
-        // uint64_t pops = 0;
-        // uint64_t txn = 0;
-        // uint64_t enq = 0;
-        // uint64_t rq_empty = 0;
-        
-        // tss = bpf_ktime_get_us();
-
-        u32 d_mapper;
-        
 	struct rq_item next[1];
 	int err;
+        int d_mapper;
 
 	if (!initialized) {
 		/*
@@ -461,95 +784,102 @@ int biff_pnt(struct bpf_ghost_sched *ctx)
 
 	/* POLICY */
 
-	// here I tried to have some barrier! But it does not work for some reason.
-	// asm volatile ("" ::: "memory");
-	// if(num_tasks == 0 ) // why should we access an empty queue
-	// 	goto done;
-
-        // pops = bpf_ktime_get_us();
+        // err = pick_from_a_group(12, next);
 	// err = bpf_map_pop_elem(&global_rq, next);
-        // Alireza
+
+
+        // if (1)
+        // bpf_printk("hand_off %d\n", 8);
+
         d_mapper = get_cpu();
-	// bpf_printk("pick next task! core running our shit %d\n", d_mapper);
-	// err = bpf_map_pop_elem(&global_rq, next);
+        // d_mapper = 0;
+        //
         
-        // if (d_mapper < 4) 
-	//         err = bpf_map_pop_elem(&global_rq_0, next);
-        if (d_mapper < 8)
-	         err = bpf_map_pop_elem(&global_rq_1, next);
-        // else if (d_mapper < 12)
-	//         err = bpf_map_pop_elem(&global_rq_2, next);
-        else if (d_mapper < 16)
-	        err = bpf_map_pop_elem(&global_rq_3, next);
-        // else if (d_mapper < 20)
-	//         err = bpf_map_pop_elem(&global_rq_4, next);
-        else if (d_mapper < 24)
-	         err = bpf_map_pop_elem(&global_rq_5, next);
-        // else if (d_mapper < 28)
-	//        err = bpf_map_pop_elem(&global_rq_6, next);
-        else if (d_mapper < 32)
-	        err = bpf_map_pop_elem(&global_rq_7, next);
-        // else if (d_mapper < 36)
-	//         err = bpf_map_pop_elem(&global_rq_8, next);
-        else if (d_mapper < 40)
-	         err = bpf_map_pop_elem(&global_rq_9, next);
-        // else if (d_mapper < 44)
-	//         err = bpf_map_pop_elem(&global_rq_10, next);
-        else if (d_mapper < 48)
-	        err = bpf_map_pop_elem(&global_rq_11, next);
-        else
-                bpf_printk("dequeue: couldn't find a group: %d\n", d_mapper);
+        // can I do division?
+        if (d_mapper < 8) {
+	        err = bpf_map_pop_elem(&global_rq_0, next);
+                err = load_balance((void *)&global_rq_1, next, err, 0);
+        } else if (d_mapper < 16) {
+	        err = bpf_map_pop_elem(&global_rq_1, next);
+                err = load_balance((void *)&global_rq_2, next, err, 1);
 
-        // switch (d_mapper) {
-        //         case 0:
-        //                 err = bpf_map_pop_elem(&global_rq_0, next);
-        //                 break;
-        //         case 1:
-        //                 err = bpf_map_pop_elem(&global_rq_1, next);
-        //                 break;
-        //         case 2:
-        //                 err = bpf_map_pop_elem(&global_rq_2, next);
-        //                 break;
-        //         case 3:
-        //                 err = bpf_map_pop_elem(&global_rq_3, next);
-        //                 break;
-        //         case 4:
-        //                 err = bpf_map_pop_elem(&global_rq_4, next);
-        //                 break;
-        //         case 5:
-        //                 err = bpf_map_pop_elem(&global_rq_5, next);
-        //                 break;
-        //         case 6:
-        //                 err = bpf_map_pop_elem(&global_rq_6, next);
-        //                 break;
-        //         case 7:
-        //                 err = bpf_map_pop_elem(&global_rq_7, next);
-        //                 break;
-        //         default:
-	//                 bpf_printk("pick next task! core running our shit %d\n", d_mapper);
-	//                 err = bpf_map_pop_elem(&global_rq, next);
+                // if (err && bpf_ktime_get_us() - ts1 > PERIOD && !CHECK_BIT(cpu_set, 1)) {
+                //         ts1 = bpf_ktime_get_us();
+                //         SET_BIT(cpu_set, 1);
+		//         bpf_printk("load balancing %d\n", d_mapper);
+                //         CLEAR_BIT(cpu_set, 1);
+                // }
+        } else if (d_mapper < 24) {
+	        err = bpf_map_pop_elem(&global_rq_2, next);
+                err = load_balance((void *)&global_rq_3, next, err, 2);
+                
+                // if (err && bpf_ktime_get_us() - ts2 > PERIOD && !CHECK_BIT(cpu_set, 2)) {
+                //         ts2 = bpf_ktime_get_us();
+                //         SET_BIT(cpu_set, 2);
+		//         bpf_printk("load balancing %d\n", d_mapper);
+                //         CLEAR_BIT(cpu_set, 2);
+                // }
+        } else if (d_mapper < 32) {
+	        err = bpf_map_pop_elem(&global_rq_3, next);
+                err = load_balance((void *)&global_rq_4, next, err, 3);
+
+                // if (err && bpf_ktime_get_us() - ts3 > PERIOD && !CHECK_BIT(cpu_set, 3)) {
+                //         ts3 = bpf_ktime_get_us();
+                //         SET_BIT(cpu_set, 3);
+		//         bpf_printk("load balancing %d\n", d_mapper);
+                //         CLEAR_BIT(cpu_set, 3);
+                // }
+        } else if (d_mapper < 40) {
+	        err = bpf_map_pop_elem(&global_rq_4, next);
+                err = load_balance((void *)&global_rq_0, next, err, 4);
+
+                // if (err && bpf_ktime_get_us() - ts4 > PERIOD && !CHECK_BIT(cpu_set, 4)) {
+                //         ts4 = bpf_ktime_get_us();
+                //         SET_BIT(cpu_set, 4);
+		//         bpf_printk("load balancing %d\n", d_mapper);
+                //         CLEAR_BIT(cpu_set, 4);
+                // }
+        } else if (d_mapper < 48) {
+	        err = bpf_map_pop_elem(&global_rq_5, next);
+
+                if (err && bpf_ktime_get_us() - ts5 > PERIOD && !CHECK_BIT(cpu_set, 5)) {
+                        ts5 = bpf_ktime_get_us();
+		        bpf_printk("load balancing %d\n", d_mapper);
+                }
+        } else {
+                bpf_printk("failed to dequeue, err %d\n", err);
+        }
+
+        
+        // if (d_mapper < 16) {
+	//         err = bpf_map_pop_elem(&global_rq_0, next);
+        // } else if (d_mapper < 32) {
+	//         err = bpf_map_pop_elem(&global_rq_1, next);
+        // } else if (d_mapper < 48) {
+	//         err = bpf_map_pop_elem(&global_rq_2, next);
+        // } else {
+	// 	bpf_printk("failed to dequeue, err %d\n", err);
         // }
 
+	// bpf_printk("something is wrong %d\n", err);
+        
 	if (err) {
 		switch (-err) {
 		case ENOENT:
 			// increment_hist(PNT_RQ_EMPTY, bpf_ktime_get_us() - pops);
 			break;
 		default:
-			bpf_printk("failed to dequeue, err %d\n", err);
+			// bpf_printk("failed failed failed to dequeue, err %d\n", err);
+			bpf_printk("failed failed failed to dequeue, err \n");
 		}
+
 		goto done;
 	} 
 
-	// __sync_fetch_and_sub(&num_tasks, 1);
 
-        // increment_hist(PNT_POP_ELEMENT, bpf_ktime_get_us() - pops);
-
-        // txn = bpf_ktime_get_us();
 	err = bpf_ghost_run_gtid(next->gtid, next->task_barrier,
 				 SEND_TASK_LATCHED);
 
-        // increment_hist(PNT_TXN, bpf_ktime_get_us() - txn);
 
 	if (err) {
 		/* Three broad classes of error:
@@ -584,9 +914,7 @@ int biff_pnt(struct bpf_ghost_sched *ctx)
 			 * or resched ourselves, we'll rerun bpf-pnt after the
 			 * task got off cpu.
 			 */
-                        // enq = bpf_ktime_get_us();
 			enqueue_task(next->gtid, next->task_barrier);
-                        // increment_hist(PNT_ENQ_EBUSY, bpf_ktime_get_us() - enq);
 			break;
 		case ERANGE:
 		case EXDEV:
@@ -625,10 +953,275 @@ done:
 	 */
 	ctx->dont_idle = true;
     
-        // increment_hist(PNT_END_TO_END, bpf_ktime_get_us() - tss);
-
 	return 0;
 }
+
+
+
+// SEC("ghost_sched/pnt")
+// int biff_pnt(struct bpf_ghost_sched *ctx)
+// {
+// 
+//         // __u32 d_mapper = get_cpu();
+//         // __u32 d_mapper_o = d_mapper;
+// 
+// 
+//         // int printtest = d_mapper;
+//         
+// 	struct rq_item next[1];
+// 	int err;
+//         int d_mapper, d_mapper_o;
+// 
+// 	if (!initialized) {
+// 		/*
+// 		 * Until the agent completes Discovery, don't schedule anything.
+// 		 * Keeping the system quiescent makes it easier to handle corner
+// 		 * cases.  Specifically, since tasks are not running, we don't
+// 		 * need to deal with unexpected preempt/blocked/yield/switchtos.
+// 		 */
+// 		set_dont_idle(ctx);
+// 		return 0;
+// 	}
+// 
+// 	/*
+// 	 * Don't bother picking a task to run if any of these are true.  If the
+// 	 * agent runs or CFS preempts us, we'll just get the latched task
+// 	 * preempted.  next_gtid is a task we already scheduled (via txn or was
+// 	 * previously running), but did not request a resched for.
+// 	 *
+// 	 * Note it is might_yield, not "will_yield", so there's a chance the CFS
+// 	 * tasks gets migrated away while the RQ lock is unlocked.  It's always
+// 	 * safer to set dont_idle.
+// 	 */
+// 	if (ctx->agent_runnable || ctx->might_yield || ctx->next_gtid) {
+// 		set_dont_idle(ctx);
+// 		return 0;
+// 	}
+// 
+// 	/* POLICY */
+// 
+//         // err = pick_from_a_group(12, next);
+// 	// err = bpf_map_pop_elem(&global_rq, next);
+// 
+// 
+//         // if (1)
+//         // bpf_printk("hand_off %d\n", 8);
+// 
+//         d_mapper = get_cpu();
+//         d_mapper = d_mapper % 8;
+//         // d_mapper = 0; 
+// 
+//         switch (d_mapper) {
+//                 case 0:
+// 	                err = bpf_map_pop_elem(&global_rq_0, next);
+//                         break;
+//                 case 1:
+// 	                err = bpf_map_pop_elem(&global_rq_1, next);
+//                         break;
+//                 case 2:
+// 	                err = bpf_map_pop_elem(&global_rq_2, next);
+//                         break;
+//                 case 3:
+// 	                err = bpf_map_pop_elem(&global_rq_3, next);
+//                         break;
+//                 case 4:
+// 	                err = bpf_map_pop_elem(&global_rq_4, next);
+//                         break;
+//                 case 5:
+// 	                err = bpf_map_pop_elem(&global_rq_5, next);
+//                         break;
+//                 case 6:
+// 	                err = bpf_map_pop_elem(&global_rq_6, next);
+//                         break;
+//                 case 7:
+// 	                err = bpf_map_pop_elem(&global_rq_7, next);
+//                         break;
+//                 case 8:
+// 	                err = bpf_map_pop_elem(&global_rq_8, next);
+//                         break;
+//                 case 9:
+// 	                err = bpf_map_pop_elem(&global_rq_9, next);
+//                         break;
+//                 case 10:
+// 	                err = bpf_map_pop_elem(&global_rq_10, next);
+//                         break;
+//                 case 11:
+// 	                err = bpf_map_pop_elem(&global_rq_11, next);
+//                         break;
+//                 case 12:
+// 	                err = bpf_map_pop_elem(&global_rq_12, next);
+//                         break;
+//                 case 13:
+// 	                err = bpf_map_pop_elem(&global_rq_13, next);
+//                         break;
+//                 case 14:
+// 	                err = bpf_map_pop_elem(&global_rq_14, next);
+//                         break;
+//                 case 15:
+// 	                err = bpf_map_pop_elem(&global_rq_15, next);
+//                         break;
+//                 case 16:
+// 	                err = bpf_map_pop_elem(&global_rq_16, next);
+//                         break;
+//                 case 17:
+// 	                err = bpf_map_pop_elem(&global_rq_17, next);
+//                         break;
+//                 case 18:
+// 	                err = bpf_map_pop_elem(&global_rq_18, next);
+//                         break;
+//                 case 19:
+// 	                err = bpf_map_pop_elem(&global_rq_19, next);
+//                         break;
+//                 case 20:
+// 	                err = bpf_map_pop_elem(&global_rq_20, next);
+//                         break;
+//                 case 21:
+// 	                err = bpf_map_pop_elem(&global_rq_21, next);
+//                         break;
+//                 case 22:
+// 	                err = bpf_map_pop_elem(&global_rq_22, next);
+//                         break;
+//                 case 23:
+// 	                err = bpf_map_pop_elem(&global_rq_23, next);
+//                         break;
+//                 case 24:
+// 	                err = bpf_map_pop_elem(&global_rq_24, next);
+//                         break;
+//                 case 25:
+// 	                err = bpf_map_pop_elem(&global_rq_25, next);
+//                         break;
+//                 case 26:
+// 	                err = bpf_map_pop_elem(&global_rq_26, next);
+//                         break;
+//                 case 27:
+// 	                err = bpf_map_pop_elem(&global_rq_27, next);
+//                         break;
+//                 case 28:
+// 	                err = bpf_map_pop_elem(&global_rq_28, next);
+//                         break;
+//                 case 29:
+// 	                err = bpf_map_pop_elem(&global_rq_29, next);
+//                         break;
+//                 case 30:
+// 	                err = bpf_map_pop_elem(&global_rq_30, next);
+//                         break;
+//                 case 31:
+// 	                err = bpf_map_pop_elem(&global_rq_31, next);
+//                         break;
+//                 case 32:
+// 	                err = bpf_map_pop_elem(&global_rq_32, next);
+//                         break;
+//                 case 33:
+// 	                err = bpf_map_pop_elem(&global_rq_33, next);
+//                         break;
+//                 case 34:
+// 	                err = bpf_map_pop_elem(&global_rq_34, next);
+//                         break;
+//                 default:
+// 			bpf_printk("failed to dequeue, err %d\n", err);
+//         }
+// 
+// 	bpf_printk("something is wrong %d\n", err);
+// 
+//         // if (d_mapper % 2 == 0) {
+// 	//         err = bpf_map_pop_elem(&global_rq_1, next);
+//         //         // if (err) 
+// 	//         //         err = bpf_map_pop_elem(&global_rq_3, next);
+//         // }
+//         // else {
+// 	//         err = bpf_map_pop_elem(&global_rq_3, next);
+//         //         // if (err) 
+// 	//         //         err = bpf_map_pop_elem(&global_rq_1, next);
+//         // }
+// 
+// 	if (err) {
+// 		switch (-err) {
+// 		case ENOENT:
+// 			// increment_hist(PNT_RQ_EMPTY, bpf_ktime_get_us() - pops);
+// 			break;
+// 		default:
+// 			bpf_printk("failed to dequeue, err %d\n", err);
+// 		}
+// 		goto done;
+// 	} 
+// 
+// 	err = bpf_ghost_run_gtid(next->gtid, next->task_barrier,
+// 				 SEND_TASK_LATCHED);
+// 
+// 	if (err) {
+// 		/* Three broad classes of error:
+// 		 * - ignore it
+// 		 * - ok, enqueue and try again
+// 		 * - bad, enqueue and hope for the best.
+// 		 *
+// 		 * We could consider retrying, but we'd need to be careful for
+// 		 * something like EBUSY, where we do not want to try again until
+// 		 * we've returned to the kernel and context switched to the idle
+// 		 * task.  Simplest to just return with dont_idle set.
+// 		 */
+// 		switch (-err) {
+// 		case ENOENT:
+// 			/* task departed, ignore */
+// 			break;
+// 		case ESTALE:
+// 			/*
+// 			 * task_barrier is old.  since we "had the ball", the
+// 			 * task should be departed or dying.  it's possible for
+// 			 * it to depart and be readded (which will generate a
+// 			 * new message), so just ignore it.
+// 			 */
+// 			break;
+// 		case EBUSY:
+// 			/*
+// 			 * task is still on_cpu.  this happens when it was
+// 			 * preempted (we got the message early in PNT), and we
+// 			 * are trying to pick what runs next, but the task
+// 			 * hasn't actually gotten off cpu yet.  if we reenqueue,
+// 			 * select the idle task, and then either set dont_idle
+// 			 * or resched ourselves, we'll rerun bpf-pnt after the
+// 			 * task got off cpu.
+// 			 */
+// 			enqueue_task(next->gtid, next->task_barrier);
+// 			break;
+// 		case ERANGE:
+// 		case EXDEV:
+// 		case EINVAL:
+// 		case ENOSPC:
+// 		default:
+// 			/*
+// 			 * Various issues, none of which should happen from PNT,
+// 			 * since we are called from an online cpu in the
+// 			 * enclave with an agent.  Though as we change the
+// 			 * kernel, some of these may occur.  Reenqueue and hope
+// 			 * for the best.
+// 			 *   - ERANGE: cpu is offline
+// 			 *   - EXDEV: cpu is not in the enclave
+// 			 *   - EINVAL: Catchall, shouldn't happen.  Other than
+// 			 *   stuff like "bad run flags", another scenario is "no
+// 			 *   agent task".  That shouldn't happen, since we run
+// 			 *   bpf-pnt only if there is an agent task
+// 			 *   (currently!).
+// 			 *   - ENOSPC: corner case in __ghost_run_gtid_on()
+// 			 *   where CFS is present, though right now it shouldn't
+// 			 *   be reachable from bpf-pnt.
+// 			 */
+// 			bpf_printk("failed to run %p, err %d\n", next->gtid, err);
+// 			enqueue_task(next->gtid, next->task_barrier);
+// 			break;
+// 		}
+// 	}
+// 
+// done:
+// 	/*
+// 	 * POLICY
+// 	 *
+// 	 * Alternatively, we could use bpf_ghost_resched_cpu() for fine-grained
+// 	 * control of cpus idling or not.
+// 	 */
+// 	ctx->dont_idle = true;
+//     
+// 	return 0;
+// }
 
 /*
  * You have to play games to get the compiler to not modify the context pointer

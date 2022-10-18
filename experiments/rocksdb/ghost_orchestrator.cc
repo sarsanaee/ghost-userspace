@@ -172,9 +172,13 @@ void GhostOrchestrator::LoadGenerator(uint32_t sid) {
              0);
     // Use 'printf' instead of 'std::cout' so that the print contents do not get
     // interleaved with the dispatcher's and the workers' print contents.
-    printf("Load generator (SID %u, TID: %ld, affined to CPU %u)\n", sid,
+    // printf("Load generator (SID %u, TID: %ld, affined to CPU %u)\n", sid,
+    //        syscall(SYS_gettid), options().load_generator_cpu);
+    fprintf(stderr, "Load generator (SID %u, TID: %ld, affined to CPU %u)\n", sid,
            syscall(SYS_gettid), options().load_generator_cpu);
     threads_ready_.WaitForNotification();
+    fprintf(stderr, "Is it waiting at all? (SID %u, TID: %ld, affined to CPU %u)\n", sid,
+           syscall(SYS_gettid), options().load_generator_cpu);
     set_start(absl::Now());
     network().Start();
   }
@@ -239,7 +243,9 @@ void GhostOrchestrator::LoadGenerator(uint32_t sid) {
 void GhostOrchestrator::Worker(uint32_t sid) {
   if (!first_run().Triggered(sid)) {
     CHECK(first_run().Trigger(sid));
-    printf("Worker (SID %u, TID: %ld, not affined to any CPU)\n", sid,
+    // printf("Worker (SID %u, TID: %ld, not affined to any CPU)\n", sid,
+    //        syscall(SYS_gettid));
+    fprintf(stderr, "Worker (SID %u, TID: %ld, not affined to any CPU)\n", sid,
            syscall(SYS_gettid));
 
     if (UsesFutex()) {

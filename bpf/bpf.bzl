@@ -15,8 +15,8 @@ def bpf_program(name, src, hdrs, bpf_object, **kwargs):
         srcs = ["@linux//:libbpf"] + [src] + hdrs,
         outs = [bpf_object],
         cmd = (
-            # "clang-12 -mcpu=v3 -g -O2 -target bpf -D__TARGET_ARCH_x86 " +
-            "clang-12 -mcpu=v1 -Xclang -target-feature -Xclang +alu32 -g -O2 -target bpf -D__TARGET_ARCH_x86 " +
+            "clang-12 -mcpu=probe -g -O2 -target bpf -D__TARGET_ARCH_x86 " +
+            # "clang-12 -mcpu=probe -Xclang -target-feature -Xclang +alu32 -g -O2 -target bpf -D__TARGET_ARCH_x86 " +
             # The `.` directory is the project root, so we pass it with the `-I`
             # flag so that #includes work in the source files.
             #
