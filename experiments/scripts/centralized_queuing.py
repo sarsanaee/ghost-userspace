@@ -62,7 +62,7 @@ def RunGhost(bpf = False):
   # Toward the end, run throughputs 430000, 431000, 432000, ..., 460000.
   e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
 
-  e.throughputs = list(i for i in range(10000, 300000, 10000))
+  #e.throughputs = list(i for i in range(10000, 300000, 10000))
   e.throughputs = [50000]
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
   # e.rocksdb.experiment_duration = '60s' # added 

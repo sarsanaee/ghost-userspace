@@ -154,11 +154,9 @@
 // 	__u.__val;					\
 // })
 // 
-#define PERIOD 1000
 
+#define PERIOD 1000
 #define CHECK_BIT(var,pos) ((var) = (var) | (1<<(pos)))
-// #define CHECK_BIT(var,pos) (__sync_fetch_and_and(var, (1<<(pos))))
-// #define SET_BIT(var,pos) ((var) = (var) | (1<<(pos)))
 #define SET_BIT(var,pos) (__sync_fetch_and_or(&var, (1<<(pos))))
 #define CLEAR_BIT(var,pos) (__sync_fetch_and_and(&var, (1<<(pos))))
 
@@ -295,6 +293,8 @@ static struct biff_bpf_sw_data *get_current(int cpu)
 static int resched_cpu(int cpu)
 {
 	struct biff_bpf_cpu_data *pcpu;
+
+        bpf_printk("is it going in here at all?\n");
 
 	pcpu = bpf_map_lookup_elem(&cpu_data, &cpu);
 	if (!pcpu)
@@ -546,7 +546,7 @@ static void enqueue_task(u64 gtid, u32 task_barrier)
         } else if (d_mapper < 48) {
                 err = bpf_map_push_elem(&global_rq_5, p, 0);
         } else {
- 		bpf_printk("Unable to find a right group %p, err %d\n", gtid, err);
+ 		bpf_printk("Unable to find a right group %d\n", d_mapper);
         }
        
 
@@ -732,14 +732,12 @@ static void __attribute__((noinline)) set_dont_idle(struct bpf_ghost_sched *ctx)
 // static int load_balance(struct bpf_map *queue, struct rq_item *next, int err) {
 static int load_balance(void * queue, struct rq_item *next, int err, int group) {
 
-
         u64 now = bpf_ktime_get_us();
-        u32 d_mapper = get_cpu();
-
         // __sync_synchronize();
-        if (now - ts0 > PERIOD && !CHECK_BIT(cpu_set, group)) {
+        // I like to count the number of hand-offs :)
+        if (err && now - ts0 > PERIOD && !CHECK_BIT(cpu_set, group)) {
                 SET_BIT(cpu_set, group);
-	        // bpf_printk("load balancing %d\n", d_mapper);
+	        // bpf_printk("load balancing %d\n", group);
                 err = bpf_map_pop_elem((struct bpf_map*)queue, next);
                 ts0 = now;
                 CLEAR_BIT(cpu_set, group);
@@ -792,53 +790,38 @@ int biff_pnt(struct bpf_ghost_sched *ctx)
         // bpf_printk("hand_off %d\n", 8);
 
         d_mapper = get_cpu();
-        // d_mapper = 0;
-        //
         
-        // can I do division?
         if (d_mapper < 8) {
 	        err = bpf_map_pop_elem(&global_rq_0, next);
                 err = load_balance((void *)&global_rq_1, next, err, 0);
+                // err = load_balance((void *)&global_rq_2, next, err, 0);
+                // err = load_balance((void *)&global_rq_3, next, err, 0);
+                // err = load_balance((void *)&global_rq_4, next, err, 0);
         } else if (d_mapper < 16) {
 	        err = bpf_map_pop_elem(&global_rq_1, next);
                 err = load_balance((void *)&global_rq_2, next, err, 1);
-
-                // if (err && bpf_ktime_get_us() - ts1 > PERIOD && !CHECK_BIT(cpu_set, 1)) {
-                //         ts1 = bpf_ktime_get_us();
-                //         SET_BIT(cpu_set, 1);
-		//         bpf_printk("load balancing %d\n", d_mapper);
-                //         CLEAR_BIT(cpu_set, 1);
-                // }
+                // err = load_balance((void *)&global_rq_0, next, err, 1);
+                // err = load_balance((void *)&global_rq_3, next, err, 1);
+                // err = load_balance((void *)&global_rq_4, next, err, 1);
         } else if (d_mapper < 24) {
 	        err = bpf_map_pop_elem(&global_rq_2, next);
                 err = load_balance((void *)&global_rq_3, next, err, 2);
-                
-                // if (err && bpf_ktime_get_us() - ts2 > PERIOD && !CHECK_BIT(cpu_set, 2)) {
-                //         ts2 = bpf_ktime_get_us();
-                //         SET_BIT(cpu_set, 2);
-		//         bpf_printk("load balancing %d\n", d_mapper);
-                //         CLEAR_BIT(cpu_set, 2);
-                // }
+                // err = load_balance((void *)&global_rq_4, next, err, 2);
+                // err = load_balance((void *)&global_rq_0, next, err, 2);
+                // err = load_balance((void *)&global_rq_1, next, err, 2);
         } else if (d_mapper < 32) {
 	        err = bpf_map_pop_elem(&global_rq_3, next);
                 err = load_balance((void *)&global_rq_4, next, err, 3);
-
-                // if (err && bpf_ktime_get_us() - ts3 > PERIOD && !CHECK_BIT(cpu_set, 3)) {
-                //         ts3 = bpf_ktime_get_us();
-                //         SET_BIT(cpu_set, 3);
-		//         bpf_printk("load balancing %d\n", d_mapper);
-                //         CLEAR_BIT(cpu_set, 3);
-                // }
+                // err = load_balance((void *)&global_rq_0, next, err, 3);
+                // err = load_balance((void *)&global_rq_1, next, err, 3);
+                // err = load_balance((void *)&global_rq_2, next, err, 3);
         } else if (d_mapper < 40) {
 	        err = bpf_map_pop_elem(&global_rq_4, next);
                 err = load_balance((void *)&global_rq_0, next, err, 4);
-
-                // if (err && bpf_ktime_get_us() - ts4 > PERIOD && !CHECK_BIT(cpu_set, 4)) {
-                //         ts4 = bpf_ktime_get_us();
-                //         SET_BIT(cpu_set, 4);
-		//         bpf_printk("load balancing %d\n", d_mapper);
-                //         CLEAR_BIT(cpu_set, 4);
-                // }
+                // err = load_balance((void *)&global_rq_1, next, err, 4);
+                // err = load_balance((void *)&global_rq_2, next, err, 4);
+                // err = load_balance((void *)&global_rq_3, next, err, 4);
+                // err = load_balance((void *)&global_rq_1, next, err, 4);
         } else if (d_mapper < 48) {
 	        err = bpf_map_pop_elem(&global_rq_5, next);
 
@@ -1397,6 +1380,7 @@ static void __attribute__((noinline)) handle_cpu_tick(struct bpf_ghost_msg *msg)
 	if (!swd)
 		return;
 
+
 	/* Arbitrary POLICY: kick anyone off cpu after 50ms */
 	if (bpf_ktime_get_us() - swd->ran_at > 50000)
 		resched_cpu(cpu);
@@ -1422,18 +1406,22 @@ int biff_msg_send(struct bpf_ghost_msg *msg)
 		handle_preempt(msg);
 		break;
 	case MSG_TASK_YIELD:
+                bpf_printk("task yield\n");
 		handle_yield(msg);
 		break;
 	case MSG_TASK_SWITCHTO:
+                bpf_printk("switch to\n");
 		handle_switchto(msg);
 		break;
 	case MSG_TASK_DEAD:
 		handle_dead(msg);
 		break;
 	case MSG_TASK_DEPARTED:
+                bpf_printk("task depart\n");
 		handle_departed(msg);
 		break;
 	case MSG_CPU_TICK:
+                bpf_printk("cpu tick\n");
 		handle_cpu_tick(msg);
 		break;
 	}
