@@ -276,12 +276,12 @@ def GhostArgs(experiment: Experiment):
         experiment.ghost.policy == Policy.SOL:
     f_cpu = experiment.ghost.firstcpu
     command = [experiment.binaries.ghost] + ["--ghost_cpus", str(f_cpu) + "-" +
-            str(f_cpu + experiment.ghost.ncpus)] 
+            str(f_cpu + experiment.ghost.ncpus - 1)] 
     return command
   elif experiment.ghost.policy == Policy.FIFO_PER_CORE:
     f_cpu = experiment.ghost.firstcpu
-    command = [experiment.binaries.ghost] + ["--ncpus", str(f_cpu +
-        experiment.ghost.ncpus)] 
+    command = [experiment.binaries.ghost] + ["--ghost_cpus", str(f_cpu) + "-" +
+            str(f_cpu + experiment.ghost.ncpus - 1)]
     return command
 
   else:

@@ -30,7 +30,7 @@ from experiments.scripts.options import GhostWaitType
 from experiments.scripts.run import Experiment
 from experiments.scripts.run import Run
 
-_NUM_CPUS = 9 
+_NUM_CPUS = 3
 _NUM_CFS_WORKERS = _NUM_CPUS - 2
 _NUM_GHOST_WORKERS = 200 
 
@@ -43,7 +43,10 @@ def RunGhostFifoPerCore():
   # Toward the end, run throughputs 430000, 431000, 432000, ..., 460000.
   e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
-  e.rocksdb.get_exponential_mean = '1us'
+  e.throughputs = [100000] # added
+  e.throughputs = list(i for i in range(10000, 100001, 10000))
+  e.rocksdb.get_exponential_mean = '0us'
+  e.rocksdb.get_duration = '64us'
   # Fifo per core scheduler does not need PRIO_TABLE and relies on FUTEX.
   e.rocksdb.ghost_wait_type = GhostWaitType.FUTEX
   e.antagonist = None
@@ -59,9 +62,11 @@ def RunGhostFifoCentralized():
   e.throughputs = list(i for i in range(10000, 421000, 10000))
   # Toward the end, run throughputs 430000, 431000, 432000, ..., 460000.
   e.throughputs.extend(list(i for i in range(430000, 461000, 1000)))
-  e.throughputs = [100000] # added
+  e.throughputs = [50000] # added
+  e.throughputs = list(i for i in range(10000, 100001, 10000))
   e.rocksdb = GetRocksDBOptions(Scheduler.GHOST, _NUM_CPUS, _NUM_GHOST_WORKERS)
-  e.rocksdb.get_exponential_mean = '1us'
+  e.rocksdb.get_exponential_mean = '0us'
+  e.rocksdb.get_duration = '16us'
   # Fifo centralized scheduler does not need PRIO_TABLE and relies on FUTEX.
   e.rocksdb.ghost_wait_type = GhostWaitType.FUTEX
   e.antagonist = None
