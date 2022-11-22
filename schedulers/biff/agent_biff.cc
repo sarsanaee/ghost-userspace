@@ -39,7 +39,7 @@ void ParseBpfConfig(ghost::AgentConfig* config) {
 
   fprintf(stderr, "testing %d\n", lastcpu);
 
-  CHECK_GT(ncpus, 1);
+  CHECK_GT(ncpus, 0);
   CHECK_GE(firstcpu, 0);
   CHECK_LT(lastcpu, ghost::MachineTopology()->num_cpus());
 
