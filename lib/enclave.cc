@@ -164,7 +164,7 @@ void LocalEnclave::ForEachTaskStatusWord(
                              uint32_t idx)>
         l) {
   // TODO: Need to support more than one SW region.
-  StatusWordTable* tbl = Ghost::GetGlobalStatusWordTable();
+  StatusWordTable* tbl = GhostHelper()->GetGlobalStatusWordTable();
   CHECK_NE(tbl, nullptr);
   tbl->ForEachTaskStatusWord(l);
 }
@@ -173,8 +173,8 @@ void LocalEnclave::ForEachTaskStatusWord(
 // file in whichever enclave directory we get.
 // static
 int LocalEnclave::MakeNextEnclave() {
-  int top_ctl =
-      open(absl::StrCat(Ghost::kGhostfsMount, "/ctl").c_str(), O_WRONLY);
+  int top_ctl = open(absl::StrCat(GhostHelper()->kGhostfsMount, "/ctl").c_str(),
+                     O_WRONLY);
   if (top_ctl < 0) {
     return -1;
   }
@@ -195,7 +195,8 @@ int LocalEnclave::MakeNextEnclave() {
   close(top_ctl);
 
   return open(
-      absl::StrCat(Ghost::kGhostfsMount, "/enclave_", id, "/ctl").c_str(),
+      absl::StrCat(GhostHelper()->kGhostfsMount, "/enclave_", id, "/ctl")
+          .c_str(),
       O_RDWR);
 }
 
@@ -211,8 +212,9 @@ int LocalEnclave::GetEnclaveDirectory(int ctl_fd) {
   CHECK_GT(read(ctl_fd, buf, sizeof(buf)), 0);
   uint64_t id;
   CHECK(absl::SimpleAtoi(buf, &id));
-  return open(absl::StrCat(Ghost::kGhostfsMount, "/enclave_", id).c_str(),
-              O_PATH);
+  return open(
+      absl::StrCat(GhostHelper()->kGhostfsMount, "/enclave_", id).c_str(),
+      O_PATH);
 }
 
 // static
@@ -334,7 +336,8 @@ void LocalEnclave::DestroyEnclave(int ctl_fd) {
 // static
 void LocalEnclave::DestroyAllEnclaves() {
   std::error_code ec;
-  auto f = std::filesystem::directory_iterator(Ghost::kGhostfsMount, ec);
+  auto f =
+      std::filesystem::directory_iterator(GhostHelper()->kGhostfsMount, ec);
   auto end = std::filesystem::directory_iterator();
   for (/* f */; !ec && f != end; f.increment(ec)) {
     if (std::regex_match(f->path().filename().string(),
@@ -354,9 +357,9 @@ void LocalEnclave::CommonInit() {
   // Bug out if we already have a non-default global enclave.  We shouldn't have
   // more than one enclave per process at a time, at least not until we have
   // fully moved away from default enclaves.
-  CHECK_EQ(Ghost::GetGlobalEnclaveCtlFd(), -1);
-  CHECK_EQ(Ghost::GetGlobalEnclaveDirFd(), -1);
-  Ghost::SetGlobalEnclaveFds(ctl_fd_, dir_fd_);
+  CHECK_EQ(GhostHelper()->GetGlobalEnclaveCtlFd(), -1);
+  CHECK_EQ(GhostHelper()->GetGlobalEnclaveDirFd(), -1);
+  GhostHelper()->SetGlobalEnclaveFds(ctl_fd_, dir_fd_);
 
   CHECK_EQ(GetAbiVersion(), GHOST_VERSION);
 
@@ -369,7 +372,8 @@ void LocalEnclave::CommonInit() {
   close(data_fd);
   CHECK_NE(data_region_, MAP_FAILED);
 
-  Ghost::SetGlobalStatusWordTable(new LocalStatusWordTable(dir_fd_, 0, 0));
+  GhostHelper()->SetGlobalStatusWordTable(
+      new LocalStatusWordTable(dir_fd_, 0, 0));
 }
 
 // Initialize a CpuRep for each cpu in enclaves_cpus_ (aka, cpus()).
@@ -471,6 +475,7 @@ LocalEnclave::LocalEnclave(AgentConfig config)
 }
 
 LocalEnclave::~LocalEnclave() {
+  PrepareToExit();
   (void)munmap(data_region_, data_region_size_);
   if (destroy_when_destructed_) {
     LocalEnclave::DestroyEnclave(ctl_fd_);
@@ -479,9 +484,9 @@ LocalEnclave::~LocalEnclave() {
   close(dir_fd_);
   // agent_test has some cases where it creates new enclaves within the same
   // process, so reset the global enclave ghost variables
-  Ghost::SetGlobalEnclaveFds(-1, -1);
-  delete Ghost::GetGlobalStatusWordTable();
-  Ghost::SetGlobalStatusWordTable(nullptr);
+  GhostHelper()->SetGlobalEnclaveFds(-1, -1);
+  delete GhostHelper()->GetGlobalStatusWordTable();
+  GhostHelper()->SetGlobalStatusWordTable(nullptr);
 }
 
 void LocalEnclave::InsertBpfPrograms() {
@@ -505,7 +510,7 @@ bool LocalEnclave::CommitRunRequests(const CpuList& cpu_list) {
 
 void LocalEnclave::SubmitRunRequests(const CpuList& cpu_list) {
   cpu_set_t cpus = topology()->ToCpuSet(cpu_list);
-  CHECK_EQ(Ghost::Commit(&cpus), 0);
+  CHECK_EQ(GhostHelper()->Commit(&cpus), 0);
 }
 
 bool LocalEnclave::CommitSyncRequests(const CpuList& cpu_list) {
@@ -535,7 +540,7 @@ bool LocalEnclave::CommitSyncRequests(const CpuList& cpu_list) {
 
 bool LocalEnclave::SubmitSyncRequests(const CpuList& cpu_list) {
   cpu_set_t cpus = topology()->ToCpuSet(cpu_list);
-  int ret = Ghost::SyncCommit(&cpus);
+  int ret = GhostHelper()->SyncCommit(&cpus);
   CHECK(ret == 0 || ret == 1);
   return ret;
 }
@@ -559,7 +564,7 @@ void LocalEnclave::SubmitRunRequest(RunRequest* req) {
                req->target().describe(), req->target_barrier());
 
   if (req->open()) {
-    CHECK_EQ(Ghost::Commit(req->cpu().id()), 0);
+    CHECK_EQ(GhostHelper()->Commit(req->cpu().id()), 0);
   } else {
     // Request already picked up by target CPU for commit.
   }
@@ -568,7 +573,7 @@ void LocalEnclave::SubmitRunRequest(RunRequest* req) {
 bool LocalEnclave::CompleteRunRequest(RunRequest* req) {
   // If request was picked up asynchronously then wait for the commit.
   //
-  // N.B. we must do this even if we call Ghost::Commit() because the
+  // N.B. we must do this even if we call GhostHelper()->Commit() because the
   // the request could be committed asynchronously even in that case.
   while (!req->committed()) {
     Pause();
@@ -627,7 +632,8 @@ void LocalEnclave::LocalYieldRunRequest(
     const RunRequest* req, const StatusWord::BarrierToken agent_barrier,
     const int flags) {
   DCHECK_EQ(sched_getcpu(), req->cpu().id());
-  int error = Ghost::Run(Gtid(0), agent_barrier, StatusWord::NullBarrierToken(),
+  int error =
+      GhostHelper()->Run(Gtid(0), agent_barrier, StatusWord::NullBarrierToken(),
                          req->cpu().id(), flags);
   // Sanity check why we failed.
   //   ESTALE: old barrier / missed message
@@ -639,10 +645,10 @@ void LocalEnclave::LocalYieldRunRequest(
 
 bool LocalEnclave::PingRunRequest(const RunRequest* req) {
   const int run_flags = 0;
-  int rc = Ghost::Run(Gtid(GHOST_AGENT_GTID),
-                      StatusWord::NullBarrierToken(),  // agent_barrier
-                      StatusWord::NullBarrierToken(),  // task_barrier
-                      req->cpu().id(), run_flags);
+  int rc = GhostHelper()->Run(Gtid(GHOST_AGENT_GTID),
+                              StatusWord::NullBarrierToken(),  // agent_barrier
+                              StatusWord::NullBarrierToken(),  // task_barrier
+                              req->cpu().id(), run_flags);
   return rc == 0;
 }
 
@@ -669,6 +675,9 @@ void LocalEnclave::AdvertiseOnline() {
 // any inserted BPF programs.  The next agent taking over the enclave needs to
 // wait until these FDs are closed, so it behooves us to close the FDs early
 // instead of waiting on the kernel to close them, which takes O(nr_cpus) ms.
+//
+// Make sure this is idempotent: TerminateAgentTasks() calls this as an
+// optimization, but ~LocalEnclave does too to ensure destruction.
 void LocalEnclave::PrepareToExit() {
   close(agent_online_fd_);
   agent_online_fd_ = -1;
@@ -677,52 +686,6 @@ void LocalEnclave::PrepareToExit() {
 
 void LocalEnclave::WaitForOldAgent() {
   WaitForAgentOnlineValue(dir_fd_, /*until=*/0);
-}
-
-void RunRequest::Open(const RunRequestOptions& options) {
-  // Wait for current owner to relinquish ownership of the sync_group txn.
-  if (options.sync_group_owner != kSyncGroupNotOwned) {
-    while (sync_group_owned()) {
-      Pause();
-    }
-  } else {
-    CHECK(!sync_group_owned());
-  }
-
-  // We do not allow transaction clobbering.
-  //
-  // Once a transaction is opened it must be committed (sync or async) before
-  // opening it again. We rely on the caller doing a Submit() which guarantees a
-  // commit-barrier on the transaction.
-  CHECK(committed());
-
-  txn_->agent_barrier = options.agent_barrier;
-  txn_->gtid = options.target.id();
-  txn_->task_barrier = options.target_barrier;
-  txn_->run_flags = options.run_flags;
-  txn_->commit_flags = options.commit_flags;
-  if (options.sync_group_owner != kSyncGroupNotOwned) {
-    sync_group_owner_set(options.sync_group_owner);
-  }
-  allow_txn_target_on_cpu_ = options.allow_txn_target_on_cpu;
-  if (allow_txn_target_on_cpu_) CHECK(sync_group_owned());
-  txn_->state.store(GHOST_TXN_READY, std::memory_order_release);
-}
-
-bool RunRequest::Abort() {
-  ghost_txn_state expected = txn_->state.load(std::memory_order_relaxed);
-  if (expected == GHOST_TXN_READY) {
-    // We do a compare exchange since we may race with the kernel trying to
-    // commit this transaction.
-    const bool aborted = txn_->state.compare_exchange_strong(
-        expected, GHOST_TXN_ABORTED, std::memory_order_release);
-    if (aborted && sync_group_owned()) {
-      sync_group_owner_set(kSyncGroupNotOwned);
-    }
-    return aborted;
-  }
-  // This transaction has already committed.
-  return false;
 }
 
 // static
@@ -775,6 +738,53 @@ std::string RunRequest::StateToString(ghost_txn_state state) {
       }
     }
   }
+}
+
+void LocalRunRequest::Open(const RunRequestOptions& options) {
+  // Wait for current owner to relinquish ownership of the sync_group txn.
+  if (options.sync_group_owner != kSyncGroupNotOwned) {
+    while (sync_group_owned()) {
+      Pause();
+    }
+  } else {
+    CHECK(!sync_group_owned());
+  }
+
+  // We do not allow transaction clobbering.
+  //
+  // Once a transaction is opened it must be committed (sync or async) before
+  // opening it again. We rely on the caller doing a Submit() which guarantees a
+  // commit-barrier on the transaction.
+  CHECK(committed());
+
+  txn_->agent_barrier = options.agent_barrier;
+  txn_->gtid = options.target.id();
+  txn_->task_barrier = options.target_barrier;
+  txn_->run_flags = options.run_flags;
+  txn_->commit_flags = options.commit_flags;
+  if (options.sync_group_owner != kSyncGroupNotOwned) {
+    sync_group_owner_set(options.sync_group_owner);
+  }
+  allow_txn_target_on_cpu_ = options.allow_txn_target_on_cpu;
+  if (allow_txn_target_on_cpu_) CHECK(sync_group_owned());
+  txn_->state.store(GHOST_TXN_READY, std::memory_order_release);
+}
+
+bool LocalRunRequest::Abort() {
+  ghost_txn_state expected = txn_->state.load(std::memory_order_relaxed);
+  if (expected == GHOST_TXN_READY) {
+    // We do a compare exchange since we may race with the kernel trying to
+    // commit this transaction.
+    const bool aborted = txn_->state.compare_exchange_strong(
+        expected, GHOST_TXN_ABORTED, std::memory_order_release);
+    if (aborted && sync_group_owned()) {
+      sync_group_owner_set(kSyncGroupNotOwned);
+    }
+    return aborted;
+  }
+  // This transaction has either been claimed (on its way to being committed)
+  // or committed.
+  return false;
 }
 
 }  // namespace ghost

@@ -66,9 +66,6 @@ void ParseGlobalConfig(GlobalConfig* config) {
 
 int main(int argc, char* argv[]) {
   absl::InitializeSymbolizer(argv[0]);
-
-  // Override default value of the verbose flag while in active development.
-  ghost::set_verbose(1);
   absl::ParseCommandLine(argc, argv);
 
   ghost::GlobalConfig config;
@@ -90,7 +87,7 @@ int main(int argc, char* argv[]) {
   auto uap = new ghost::AgentProcess<ghost::GlobalEdfAgent<ghost::LocalEnclave>,
                                      ghost::GlobalConfig>(config);
 
-  ghost::Ghost::InitCore();
+  ghost::GhostHelper()->InitCore();
 
   printf("Initialization complete, ghOSt active.\n");
   // When `stdout` is directed to a terminal, it is newline-buffered. When

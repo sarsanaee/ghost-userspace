@@ -15,6 +15,8 @@ exports_files([
     "biff_bpf.h",
     "common.bpf.h",
     "edf.h",
+    "pntring.bpf.h",
+    "pntring_funcs.bpf.h",
     "schedfair.h",
     "schedlat.h",
     "schedrun.h",
@@ -97,4 +99,14 @@ bpf_program(
         "//third_party:iovisor_bcc/bits.bpf.h",
     ],
     bpf_object = "schedrun_bpf.o",
+)
+
+bpf_program(
+    name = "test_bpf",
+    src = "test.bpf.c",
+    hdrs = [
+        "common.bpf.h",
+        "//:kernel/vmlinux_ghost_5_11.h",
+    ],
+    bpf_object = "test_bpf.o",
 )
