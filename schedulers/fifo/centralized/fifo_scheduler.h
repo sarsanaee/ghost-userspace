@@ -1,18 +1,8 @@
-/*
- * Copyright 2021 Google LLC
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright 2021 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #ifndef GHOST_SCHEDULERS_FIFO_CENTRALIZED_FIFO_SCHEDULER_H
 #define GHOST_SCHEDULERS_FIFO_CENTRALIZED_FIFO_SCHEDULER_H
@@ -116,8 +106,7 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
   void RemoveFromRunqueue(FifoTask* task);
 
   // Main scheduling function for the global agent.
-  void GlobalSchedule(const StatusWord& agent_sw,
-                      StatusWord::BarrierToken agent_sw_last);
+  void GlobalSchedule(const StatusWord& agent_sw, BarrierToken agent_sw_last);
 
   int32_t GetGlobalCPUId() {
     return global_cpu_.load(std::memory_order_acquire);
@@ -132,8 +121,7 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
   // global agent's CPU, the global agent calls this function to try to pick a
   // new CPU to move to and, if a new CPU is found, to initiate the handoff
   // process.
-  bool PickNextGlobalCPU(StatusWord::BarrierToken agent_barrier,
-                         const Cpu& this_cpu);
+  bool PickNextGlobalCPU(BarrierToken agent_barrier, const Cpu& this_cpu);
 
   // Print debug details about the current tasks managed by the global agent,
   // CPU state, and runqueue stats.

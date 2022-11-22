@@ -1,18 +1,8 @@
-/*
- * Copyright 2021 Google LLC
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright 2021 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #ifndef _SCHED_GHOST_H_
 #define _SCHED_GHOST_H_
@@ -35,7 +25,7 @@
  * process are the same version as each other. Each successive version changes
  * values in this header file, assumptions about operations in the kernel, etc.
  */
-#define GHOST_VERSION	69
+#define GHOST_VERSION	70
 
 /*
  * Define SCHED_GHOST via the ghost uapi unless it has already been defined
@@ -109,7 +99,7 @@ struct ghost_ioc_create_queue {
 struct ghost_ioc_assoc_queue {
 	int fd;
 	struct ghost_msg_src src;
-	int barrier;
+	uint32_t barrier;
 	int flags;
 };
 

@@ -1,18 +1,8 @@
-/*
- * Copyright 2022 Google LLC
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright 2022 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #ifndef GHOST_SCHEDULERS_CFS_CFS_SCHEDULER_H_
 #define GHOST_SCHEDULERS_CFS_CFS_SCHEDULER_H_
@@ -273,14 +263,16 @@ class CfsScheduler : public BasicDispatchScheduler<CfsTask> {
   void CpuTick(const Message& msg) final;
 
  private:
+  // Empties the channel associated with cpu and dispatches the messages.
+  void DrainChannel(const Cpu& cpu);
+
   // Checks if we should preempt the current task. If so, sets preempt_curr_.
   void CheckPreemptTick(const Cpu& cpu);
 
   // CfsSchedule looks at the current cpu state and its run_queue, decides what
   // to run next, and then commits a txn. REQUIRES: Called after all messages
   // have been ack'ed otherwise the txn will fail.
-  void CfsSchedule(const Cpu& cpu, StatusWord::BarrierToken agent_barrier,
-                   bool prio_boost);
+  void CfsSchedule(const Cpu& cpu, BarrierToken agent_barrier, bool prio_boost);
 
   // HandleTaskDone is responsible for remvoing a task from the run queue and
   // freeing it if it is currently !cs->current, otherwise, it defers the
@@ -288,7 +280,7 @@ class CfsScheduler : public BasicDispatchScheduler<CfsTask> {
   void HandleTaskDone(CfsTask* task, bool from_switchto);
 
   // Migrate takes task and places it on cpu's run queue.
-  void Migrate(CfsTask* task, Cpu cpu, StatusWord::BarrierToken seqnum);
+  void Migrate(CfsTask* task, Cpu cpu, BarrierToken seqnum);
   Cpu SelectTaskRq(CfsTask* task);
   void DumpAllTasks();
 
@@ -300,6 +292,21 @@ class CfsScheduler : public BasicDispatchScheduler<CfsTask> {
     CHECK_GE(task->cpu, 0);
     CHECK_LT(task->cpu, MAX_CPUS);
     return &cpu_states_[task->cpu];
+  }
+
+  // If called with is_agent_thread = true, then we use the cache'd TLS cpu id
+  // as agent threads are local to a single cpu, otherwise, issue a syscall.
+  int MyCpu(bool is_agent_thread = true) {
+    if (!is_agent_thread) return sched_getcpu();
+    // "When thread_local is applied to a variable of block scope the
+    // storage-class-specifier static is implied if it does not appear
+    // explicitly" - C++ standard.
+    // This isn't obvious, so keep the static modifier.
+    static thread_local int my_cpu = -1;
+    if (my_cpu == -1) {
+      my_cpu = sched_getcpu();
+    }
+    return my_cpu;
   }
 
   CpuState cpu_states_[MAX_CPUS];

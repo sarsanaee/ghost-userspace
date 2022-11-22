@@ -1,16 +1,8 @@
 // Copyright 2021 Google LLC
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #include <sys/mman.h>
 
@@ -18,6 +10,7 @@
 #include "gtest/gtest.h"
 #include "absl/random/random.h"
 #include "lib/agent.h"
+#include "lib/ghost.h"
 #include "lib/scheduler.h"
 #include "schedulers/fifo/per_cpu/fifo_scheduler.h"
 
@@ -71,7 +64,6 @@ class DeadAgent : public LocalAgent {
     // the task when it is exiting).
     ASSERT_THAT(channel_, NotNull());
 
-    bool done = false;  // set to true below when MSG_TASK_DEAD is received.
     std::unique_ptr<Task<>> task(nullptr);  // initialized in TASK_NEW handler.
     while (true) {
       while (true) {
@@ -97,8 +89,7 @@ class DeadAgent : public LocalAgent {
 
           case MSG_TASK_DEAD:
             ASSERT_THAT(task, NotNull());
-            ASSERT_THAT(done, IsFalse());
-            done = true;
+            task = nullptr;
             break;
 
           default:
@@ -107,10 +98,22 @@ class DeadAgent : public LocalAgent {
         Consume(channel_, msg);
       }
 
-      StatusWord::BarrierToken agent_barrier = status_word().barrier();
+      BarrierToken agent_barrier = status_word().barrier();
       const bool prio_boost = status_word().boosted_priority();
 
-      if (Finished() && done) {
+      if (Finished()) {
+        // If the agent is terminating before observing the TASK_DEAD msg
+        // then explicitly release ownership of the underlying Task object.
+        //
+        // In this situation it is possible that the task's status_word is
+        // not marked CAN_FREE when the Task::~Task() runs which in turn
+        // triggers a CHECK fail.
+        //
+        // Note that the kernel will move the task to CFS when the enclave
+        // is destroyed so there is no risk of stranding the task.
+        if (task) {
+          task.release();
+        }
         break;
       }
 
@@ -257,7 +260,7 @@ class SyncGroupScheduler final : public BasicDispatchScheduler<FifoTask> {
     return rq_.Empty();
   }
 
-  void Schedule(const Cpu& this_cpu, StatusWord::BarrierToken agent_barrier,
+  void Schedule(const Cpu& this_cpu, BarrierToken agent_barrier,
                 bool prio_boost, bool finished) {
     RunRequest* req = enclave()->GetRunRequest(this_cpu);
 
@@ -295,7 +298,7 @@ class SyncGroupScheduler final : public BasicDispatchScheduler<FifoTask> {
 
       const int sync_group_owner = this_cpu.id();
       Gtid target = Gtid(GHOST_IDLE_GTID);
-      StatusWord::BarrierToken target_barrier = StatusWord::NullBarrierToken();
+      BarrierToken target_barrier = StatusWord::NullBarrierToken();
       RunRequest* req = enclave()->GetRunRequest(cpu);
       if (cs->next) {
         target = cs->next->gtid;
@@ -485,7 +488,7 @@ class TestAgent : public LocalAgent {
     while (true) {
       // Order is important: agent_barrier must be evaluated before Finished().
       // (see cl/339780042 for details).
-      StatusWord::BarrierToken agent_barrier = status_word().barrier();
+      BarrierToken agent_barrier = status_word().barrier();
       const bool prio_boost = status_word().boosted_priority();
       const bool finished = Finished();
 
@@ -592,7 +595,7 @@ class IdlingAgent : public LocalAgent {
     remote_cpus.Clear(cpu());
 
     while (!Finished()) {
-      StatusWord::BarrierToken agent_barrier = status_word().barrier();
+      BarrierToken agent_barrier = status_word().barrier();
 
       // Non-scheduling agents just yield until they are terminated.
       if (!schedule_) {
@@ -1182,7 +1185,7 @@ class TimeAgent : public LocalAgent {
         Consume(&channel_, msg);
       }
 
-      StatusWord::BarrierToken agent_barrier = status_word().barrier();
+      BarrierToken agent_barrier = status_word().barrier();
       const bool prio_boost = status_word().boosted_priority();
 
       if (Finished() && !task) break;
@@ -1330,7 +1333,7 @@ class SchedAffinityAgent : public LocalAgent {
     size_t task_cpu_idx = 0;    // schedule task on task_cpulist[task_cpu_idx]
 
     while (true) {
-      const StatusWord::BarrierToken agent_barrier = status_word().barrier();
+      const BarrierToken agent_barrier = status_word().barrier();
 
       while (true) {
         Message msg = Peek(channel_);
@@ -1734,10 +1737,10 @@ class DepartedRaceAgent : public LocalAgent {
         Consume(channel_, msg);
       }
 
-      StatusWord::BarrierToken agent_barrier = status_word().barrier();
+      BarrierToken agent_barrier = status_word().barrier();
       const bool prio_boost = status_word().boosted_priority();
 
-      if (Finished() && !num_tasks) {
+      if (Finished()) {
         break;
       }
 
@@ -1752,6 +1755,13 @@ class DepartedRaceAgent : public LocalAgent {
         FifoTask* task = run_queue.Dequeue();
         if (!task) {
           break;  // no more runnable tasks.
+        }
+
+        if (task->status_word.on_cpu()) {
+          // 'task' is still oncpu: put it back on the run_queue and try to
+          // schedule in the next iteration.
+          run_queue.Enqueue(task);
+          continue;
         }
 
         RunRequest* req = enclave()->GetRunRequest(cpu);
@@ -1905,6 +1915,25 @@ TEST(ApiTest, GhostCloneGhost) {
     num_tasks = ap.Rpc(FifoScheduler::kCountAllTasks);
     EXPECT_THAT(num_tasks, Ge(0));
   } while (num_tasks);
+
+  GhostHelper()->CloseGlobalEnclaveFds();
+}
+
+// Enter into ghost using a gtid.
+TEST(ApiTest, SchedEnterGhostGtid) {
+  Topology* topology = MachineTopology();
+
+  auto ap = AgentProcess<FullFifoAgent<LocalEnclave>, AgentConfig>(
+      AgentConfig(topology, topology->ToCpuList(std::vector<int>{0})));
+
+  GhostThread t(GhostThread::KernelScheduler::kCfs, [] {
+    EXPECT_THAT(sched_getscheduler(/*pid=*/0), Eq(0));
+    EXPECT_THAT(
+        GhostHelper()->SchedTaskEnterGhost(Gtid::Current(), /*dir_fd=*/-1),
+        Eq(0));
+    EXPECT_THAT(sched_getscheduler(/*pid=*/0), Eq(SCHED_GHOST));
+  });
+  t.Join();
 
   GhostHelper()->CloseGlobalEnclaveFds();
 }

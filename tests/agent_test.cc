@@ -1,16 +1,8 @@
 // Copyright 2021 Google LLC
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #include "lib/agent.h"
 
@@ -59,7 +51,7 @@ class SimpleAgent : public LocalAgent {
     // a LocalYield() every time it wakes up. We only expect to be woken up
     // by a Ping() from another agent or the main thread.
     while (!Finished()) {
-      StatusWord::BarrierToken agent_barrier = status_word().barrier();
+      BarrierToken agent_barrier = status_word().barrier();
       RunRequest* req = enclave()->GetRunRequest(cpu());
 
       NotifyIdle();
@@ -158,7 +150,7 @@ class FullSimpleAgent : public FullAgent<EnclaveType> {
         ghost_sw_info info;
         response_code = 0;
         if (GhostHelper()->GetStatusWordInfo(static_cast<ghost_type>(args.arg0),
-                                             args.arg1, &info) != 0) {
+                                             args.arg1, info) != 0) {
           response_code = errno;
         }
         break;
@@ -355,7 +347,7 @@ class SpinningAgent : public LocalAgent {
     // Spin so kernel emits MSG_CPU_TICK on the channel associated with
     // this agent.
     while (!Finished()) {
-      StatusWord::BarrierToken agent_barrier = status_word().barrier();
+      BarrierToken agent_barrier = status_word().barrier();
       bool prio_boost = status_word().boosted_priority();
       if (prio_boost) {
         RunRequest* req = enclave()->GetRunRequest(cpu());
@@ -498,7 +490,7 @@ class CallbackAgent : public LocalAgent {
 
       // Yield until a message on 'channel_' wakes us up.
       RunRequest* req = enclave()->GetRunRequest(cpu());
-      const StatusWord::BarrierToken agent_barrier = status_word().barrier();
+      const BarrierToken agent_barrier = status_word().barrier();
       const bool prio_boost = status_word().boosted_priority();
 
       if (prio_boost) {
@@ -620,7 +612,7 @@ TEST(AgentTest, MsgTimerExpired) {
 
   const uint64_t type = fd;
   const uint64_t cookie = fd;
-  ASSERT_THAT(GhostHelper()->TimerFdSettime(fd, /*flags=*/0, &itimerspec,
+  ASSERT_THAT(GhostHelper()->TimerFdSettime(fd, /*flags=*/0, itimerspec,
                                             target_cpu, type, cookie),
               Eq(0));
 
@@ -780,7 +772,7 @@ class SetSchedAgent : public LocalAgent {
     // a Ping() from the main thread on termination.
     RunRequest* req = enclave()->GetRunRequest(cpu());
     while (!Finished()) {
-      StatusWord::BarrierToken agent_barrier = status_word().barrier();
+      BarrierToken agent_barrier = status_word().barrier();
       req->LocalYield(agent_barrier, /*flags=*/0);
     }
   }

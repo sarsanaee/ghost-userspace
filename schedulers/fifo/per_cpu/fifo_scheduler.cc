@@ -1,16 +1,8 @@
 // Copyright 2021 Google LLC
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #include "schedulers/fifo/per_cpu/fifo_scheduler.h"
 
@@ -86,8 +78,7 @@ Cpu FifoScheduler::AssignCpu(FifoTask* task) {
   return next++;
 }
 
-void FifoScheduler::Migrate(FifoTask* task, Cpu cpu,
-                            StatusWord::BarrierToken seqnum) {
+void FifoScheduler::Migrate(FifoTask* task, Cpu cpu, BarrierToken seqnum) {
   CHECK_EQ(task->run_state, FifoTaskState::kRunnable);
   CHECK_EQ(task->cpu, -1);
 
@@ -259,8 +250,7 @@ void FifoScheduler::TaskOnCpu(FifoTask* task, Cpu cpu) {
   task->prio_boost = false;
 }
 
-void FifoScheduler::FifoSchedule(const Cpu& cpu,
-                                 StatusWord::BarrierToken agent_barrier,
+void FifoScheduler::FifoSchedule(const Cpu& cpu, BarrierToken agent_barrier,
                                  bool prio_boost) {
   CpuState* cs = cpu_state(cpu);
   FifoTask* next = nullptr;
@@ -324,7 +314,7 @@ void FifoScheduler::FifoSchedule(const Cpu& cpu,
 }
 
 void FifoScheduler::Schedule(const Cpu& cpu, const StatusWord& agent_sw) {
-  StatusWord::BarrierToken agent_barrier = agent_sw.barrier();
+  BarrierToken agent_barrier = agent_sw.barrier();
   CpuState* cs = cpu_state(cpu);
 
   GHOST_DPRINT(3, stderr, "Schedule: agent_barrier[%d] = %d\n", cpu.id(),

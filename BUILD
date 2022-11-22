@@ -7,8 +7,8 @@ package(default_visibility = ["//:__pkg__"])
 
 # Each license covers the code below:
 #
-# BSD 2: Just covers the IOVisor BCC code in third_party/iovisor_bcc/. This
-# code was not written by Google.
+# BSD 2-clause: Just covers the IOVisor BCC code in third_party/iovisor_bcc/.
+# This code was not written by Google.
 #
 # GPLv2: Just covers the eBPF code in third_party/bpf/. This code was written
 # by Google. We need to license it under GPLv2 though so that the eBPF code
@@ -17,8 +17,8 @@ package(default_visibility = ["//:__pkg__"])
 # MIT: Just covers third_party/util/util.h. This code was not written by Google,
 # but was modified by Google.
 #
-# Apache 2: All other code is covered by Apache 2. This includes the library
-# code in lib/, the experiments, all code in bpf/user/, etc.
+# BSD 3-clause: All other code is covered by BSD 3-clause. This includes the
+# library code in lib/, the experiments, all code in bpf/user/, etc.
 licenses(["notice"])
 
 exports_files(["LICENSE"])
@@ -82,8 +82,6 @@ cc_binary(
         ":base",
         "@com_google_absl//absl/debugging:symbolize",
         "@com_google_absl//absl/flags:parse",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
@@ -235,6 +233,7 @@ cc_test(
     deps = [
         ":agent",
         ":fifo_per_cpu_scheduler",
+        ":ghost",
         "@com_google_absl//absl/random",
         "@com_google_googletest//:gtest_main",
     ],
@@ -439,6 +438,59 @@ cc_test(
     deps = [
         ":agent",
         ":fifo_centralized_scheduler",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "fd_server",
+    srcs = [
+        "shared/fd_server.cc",
+    ],
+    hdrs = [
+        "shared/fd_server.h",
+    ],
+    copts = compiler_flags,
+    deps = [
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_binary(
+    name = "fdcat",
+    srcs = [
+        "util/fdcat.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":fd_server",
+    ],
+)
+
+cc_binary(
+    name = "fdsrv",
+    srcs = [
+        "util/fdsrv.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":fd_server",
+    ],
+)
+
+cc_test(
+    name = "fd_server_test",
+    size = "small",
+    srcs = [
+        "tests/fd_server_test.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":fd_server",
         "@com_google_googletest//:gtest_main",
     ],
 )
