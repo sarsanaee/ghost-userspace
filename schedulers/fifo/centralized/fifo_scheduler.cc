@@ -446,12 +446,14 @@ void FifoAgent::AgentThread() {
         printf("Agent on cpu: %d Idled.\n", cpu().id());
       }
       req->LocalYield(agent_barrier, /*flags=*/0);
-    } else {
-      if (boosted_priority() &&
-          global_scheduler_->PickNextGlobalCPU(agent_barrier, cpu())) {
-        continue;
-      }
-
+    } 
+    
+     else {
+//       if (boosted_priority() &&
+//           global_scheduler_->PickNextGlobalCPU(agent_barrier, cpu())) {
+//         continue;
+//       }
+// 
       Message msg;
       while (!(msg = global_channel.Peek()).empty()) {
         global_scheduler_->DispatchMessage(msg);
