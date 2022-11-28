@@ -442,19 +442,25 @@ void FifoAgent::AgentThread() {
         printf("Agent on cpu: %d Idled.\n", cpu().id());
       }
       req->LocalYield(agent_barrier, /*flags=*/0);
-    } else {
-      if (boosted_priority() &&
-          global_scheduler_->PickNextGlobalCPU(agent_barrier, cpu())) {
-        continue;
-      }
-
+    } 
+    
+     else {
+//       if (boosted_priority() &&
+//           global_scheduler_->PickNextGlobalCPU(agent_barrier, cpu())) {
+//         continue;
+//       }
+// 
       Message msg;
       while (!(msg = global_channel.Peek()).empty()) {
         global_scheduler_->DispatchMessage(msg);
         global_channel.Consume(msg);
       }
 
+      global_scheduler_->EnterSchedule();
+
       global_scheduler_->GlobalSchedule(status_word(), agent_barrier);
+
+      global_scheduler_->ExitSchedule();
 
       if (verbose() && debug_out.Edge()) {
         static const int flags =

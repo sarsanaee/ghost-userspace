@@ -10,6 +10,7 @@ cgroup profiling and socket profiling, mounts a tmpfs backed by hugepages, and
 copies the experiment binaries included as data dependencies to the tmpfs mount.
 """
 
+from cmath import exp
 import os
 import pathlib
 import shutil
@@ -17,9 +18,8 @@ import stat
 import subprocess
 import tempfile
 import zipfile
-from experiments.scripts.options import Paths
+from experiments.scripts.options import GhostOptions, Paths
 from experiments.scripts.options import TMPFS_MOUNT
-
 
 def DisableCStates():
   """Disables deep C-states."""
@@ -115,7 +115,7 @@ def UnzipPar():
     zf.extractall(path)
   return tmp
 
-
+# def CopyBinaries(paths: Paths, go: GhostOptions):
 def CopyBinaries(paths: Paths):
   """Copies RocksDB, Antagonist, and ghOSt binaries to external paths.
 
@@ -131,11 +131,14 @@ def CopyBinaries(paths: Paths):
   CopyBinary(tmp.name + "/com_google_ghost/antagonist", paths.antagonist)
   CopyBinary(tmp.name + "/com_google_ghost/agent_shinjuku", paths.ghost)
   CopyBinary(tmp.name + "/com_google_ghost/agent_biff", paths.ghost_bpf)
+  CopyBinary(tmp.name + "/com_google_ghost/agent_fifo_per_cpu", paths.ghost_fifo_per_core)
+  CopyBinary(tmp.name + "/com_google_ghost/agent_fifo_centralized", paths.ghost_fifo_centralized)
   tmp.cleanup()
 
 
 # TODO: Disable MSV fixing.
 def SetUp(binaries: Paths):
+
   """Set up the machine for the experiments.
 
   This includes disabling C-states, disabling profiling, mounting a tmpfs

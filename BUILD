@@ -496,11 +496,12 @@ cc_test(
 )
 
 cc_binary(
-    name = "fifo_per_cpu_agent",
+    name = "agent_fifo_per_cpu",
     srcs = [
         "schedulers/fifo/per_cpu/fifo_agent.cc",
     ],
     copts = compiler_flags,
+    visibility = ["//experiments/scripts:__pkg__"],
     deps = [
         ":agent",
         ":fifo_per_cpu_scheduler",
@@ -525,11 +526,13 @@ cc_library(
 )
 
 cc_binary(
-    name = "fifo_centralized_agent",
+    name = "agent_fifo_centralized",
     srcs = [
         "schedulers/fifo/centralized/fifo_agent.cc",
     ],
     copts = compiler_flags,
+    visibility = ["//experiments/scripts:__pkg__"],
+
     deps = [
         ":agent",
         ":fifo_centralized_scheduler",

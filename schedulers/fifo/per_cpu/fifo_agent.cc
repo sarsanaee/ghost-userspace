@@ -43,6 +43,7 @@ int main(int argc, char* argv[]) {
 
   ghost::AgentConfig config;
   ghost::ParseAgentConfig(&config);
+  ghost::set_verbose(1);
 
   printf("Initializing...\n");
 

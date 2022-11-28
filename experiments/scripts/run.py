@@ -33,7 +33,6 @@ from experiments.scripts.options import Paths
 from experiments.scripts.options import RocksDBOptions
 from experiments.scripts.setup import SetUp
 
-
 @dataclass
 class Experiment:
   """The experiment properties.
@@ -58,6 +57,8 @@ class Experiment:
   antagonist: Optional[AntagonistOptions] = None
   ghost: Optional[GhostOptions] = None
   bpf: Optional[bool] = False
+  fifo_centralized: Optional[bool] = False 
+  fifo_per_core: Optional[bool] = False 
 
 @dataclass
 class AppHandles:
@@ -107,12 +108,15 @@ def CheckBinaries(experiment: Experiment) -> bool:
     True if all of the binaries needed for the experiment exist. False
     otherwise.
   """
+
   rocksdb = os.path.exists(experiment.binaries.rocksdb)
   antagonist = not experiment.antagonist or os.path.exists(
       experiment.binaries.antagonist)
   ghost = not experiment.ghost or os.path.exists(experiment.binaries.ghost)
   ghost_bpf = not experiment.bpf or os.path.exists(experiment.binaries.ghost_bpf)
-  return rocksdb and antagonist and ghost
+  ghost_fifo_per_core = not experiment.ghost or os.path.exists(experiment.binaries.ghost_fifo_per_core)
+  ghost_fifo_centralized = not experiment.ghost or os.path.exists(experiment.binaries.ghost_fifo_centralized)
+  return rocksdb and antagonist and ghost and ghost_bpf and ghost_fifo_centralized and ghost_fifo_per_core
 
 
 def SetUpOutputDirectory(experiment: Experiment):
@@ -259,9 +263,17 @@ def GhostArgs(experiment: Experiment):
   if not experiment.ghost:
     raise ValueError("ghOSt has not been configured.")
 
-  # Now that interface is similar I should not need different code path for BPF
   if experiment.bpf:
     return [experiment.binaries.ghost_bpf] + DataClassToArgs(experiment.ghost)
+
+  # This need refinement
+  if experiment.fifo_centralized or experiment.fifo_per_core:
+    f_cpu = experiment.ghost.firstcpu
+    command = [experiment.binaries.ghost_fifo_centralized if
+            experiment.fifo_centralized else
+            experiment.binaries.ghost_fifo_per_core] + ["--ghost_cpus",
+                    str(f_cpu) + "-" + str(f_cpu + experiment.ghost.ncpus - 1)] 
+    return command
 
   return [experiment.binaries.ghost] + DataClassToArgs(experiment.ghost)
 

@@ -42,7 +42,6 @@ class Scheduler(str, enum.Enum):
   GHOST = "ghost"
   GHOST_BPF = "ghost_bpf"
 
-
 def CheckSchedulers(schedulers: List[str]) -> bool:
   """Checks that `schedulers` contains valid schedulers.
 
@@ -56,6 +55,7 @@ def CheckSchedulers(schedulers: List[str]) -> bool:
     try:
       Scheduler(scheduler)
     except ValueError:
+      print("ever in here?")
       return False
   return True
 
@@ -108,7 +108,8 @@ class Paths:
   antagonist: str = os.path.join(TMPFS_MOUNT, "antagonist")
   ghost: str = os.path.join(TMPFS_MOUNT, "agent_shinjuku")
   ghost_bpf: str = os.path.join(TMPFS_MOUNT, "agent_biff")
-
+  ghost_fifo_centralized: str = os.path.join(TMPFS_MOUNT, "agent_fifo_centralized")
+  ghost_fifo_per_core: str = os.path.join(TMPFS_MOUNT, "agent_fifo_per_core")
 
 def GetDefaultRocksDBWorkerCpus():
   """Returns the default list of worker CPUs for RocksDB.

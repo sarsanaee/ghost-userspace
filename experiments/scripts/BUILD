@@ -20,15 +20,31 @@ py_library(
         "//:agent_biff",
         "//:agent_shinjuku",
         "//:antagonist",
+        "//:agent_fifo_centralized",
+        "//:agent_fifo_per_cpu",
         "//:rocksdb",
     ],
 )
+
 
 # Runs the bpf scalability experiments.
 par_binary(
     name = "bpf_core_scalability",
     srcs = [
         "bpf_core_scalability.py",
+    ],
+    python_version = "PY3",
+    deps = [
+        ":experiments",
+        requirement("absl-py"),
+    ],
+)
+
+# Runs the fifo centralized queuing experiments.
+par_binary(
+    name = "fifo_queuing",
+    srcs = [
+        "fifo_queuing.py",
     ],
     python_version = "PY3",
     deps = [
