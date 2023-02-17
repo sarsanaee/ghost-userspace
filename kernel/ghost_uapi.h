@@ -25,7 +25,7 @@
  * process are the same version as each other. Each successive version changes
  * values in this header file, assumptions about operations in the kernel, etc.
  */
-#define GHOST_VERSION	70
+#define GHOST_VERSION	75
 
 /*
  * Define SCHED_GHOST via the ghost uapi unless it has already been defined
@@ -247,11 +247,16 @@ enum {
 	MSG_TASK_SWITCHTO,
 	MSG_TASK_AFFINITY_CHANGED,
 	MSG_TASK_LATCHED,
+	MSG_TASK_PRIORITY_CHANGED,
 
 	/* cpu messages */
 	MSG_CPU_TICK		= _MSG_CPU_FIRST,
 	MSG_CPU_TIMER_EXPIRED,
 	MSG_CPU_NOT_IDLE,	/* requested via run_flags: NEED_CPU_NOT_IDLE */
+	MSG_CPU_AVAILABLE,
+	MSG_CPU_BUSY,
+	MSG_CPU_AGENT_BLOCKED,
+	MSG_CPU_AGENT_WAKEUP,
 };
 
 /* TODO: Move payload to header once all clients updated. */
@@ -259,6 +264,7 @@ struct ghost_msg_payload_task_new {
 	uint64_t gtid;
 	uint64_t runtime;	/* cumulative runtime in ns */
 	uint16_t runnable;
+	int nice;		/* task priority in nice value [-20, 19] */
 	struct ghost_sw_info sw_info;
 };
 
@@ -303,6 +309,11 @@ struct ghost_msg_payload_task_departed {
 
 struct ghost_msg_payload_task_affinity_changed {
 	uint64_t gtid;
+};
+
+struct ghost_msg_payload_task_priority_changed {
+	uint64_t gtid;
+	int nice;	/* task priority in nice value [-20, 19]. */
 };
 
 struct ghost_msg_payload_task_wakeup {
@@ -355,6 +366,22 @@ struct ghost_msg_payload_timer {
 	uint64_t cookie;
 };
 
+struct ghost_msg_payload_cpu_available {
+	int cpu;
+};
+
+struct ghost_msg_payload_cpu_busy {
+	int cpu;
+};
+
+struct ghost_msg_payload_agent_blocked {
+	int cpu;
+};
+
+struct ghost_msg_payload_agent_wakeup {
+	int cpu;
+};
+
 struct bpf_ghost_msg {
 	union {
 		struct ghost_msg_payload_task_dead	dead;
@@ -366,10 +393,15 @@ struct bpf_ghost_msg {
 		struct ghost_msg_payload_task_departed	departed;
 		struct ghost_msg_payload_task_switchto	switchto;
 		struct ghost_msg_payload_task_affinity_changed	affinity;
+		struct ghost_msg_payload_task_priority_changed	priority;
 		struct ghost_msg_payload_task_latched	latched;
 		struct ghost_msg_payload_cpu_tick	cpu_tick;
 		struct ghost_msg_payload_timer		timer;
 		struct ghost_msg_payload_cpu_not_idle	cpu_not_idle;
+		struct ghost_msg_payload_cpu_available	cpu_available;
+		struct ghost_msg_payload_cpu_busy	cpu_busy;
+		struct ghost_msg_payload_agent_blocked	agent_blocked;
+		struct ghost_msg_payload_agent_wakeup	agent_wakeup;
 	};
 	uint16_t type;
 	uint32_t seqnum;

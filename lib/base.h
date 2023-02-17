@@ -14,6 +14,7 @@
 #include <execinfo.h>
 #include <fcntl.h>
 #include <linux/futex.h>
+#include <sys/capability.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -34,6 +35,7 @@
 #include "lib/logging.h"
 
 ABSL_DECLARE_FLAG(std::string, ghost_procfs_prefix);
+ABSL_DECLARE_FLAG(bool, emit_fork_warnings);
 
 namespace ghost {
 
@@ -46,6 +48,7 @@ void Exit(int code);
 size_t GetFileSize(int fd);
 void SpinFor(absl::Duration remaining);
 void PrintBacktrace(FILE* f, void* uctx = nullptr);
+bool CapHas(cap_value_t cap);
 
 // This is useful for reading non-atomic variables that may be changed by the
 // kernel or by other threads. There are three main advantages to wrapping a
@@ -186,8 +189,7 @@ class Gtid {
   bool operator!() const { return id() == 0; }
 
   friend std::ostream& operator<<(std::ostream& os, const Gtid& gtid) {
-    os << gtid.id();
-    return os;
+    return os << gtid.id();
   }
 
   // These are just some simple debug helpers to make things more readable.
@@ -341,20 +343,12 @@ class Notification {
                                   Notification::NotifiedState notified_state) {
     switch (notified_state) {
       case Notification::NotifiedState::kNoWaiter:
-        os << "No Waiter";
-        break;
+        return os << "No Waiter";
       case Notification::NotifiedState::kWaiter:
-        os << "Waiter";
-        break;
+        return os << "Waiter";
       case Notification::NotifiedState::kNotified:
-        os << "Notified";
-        break;
-      default:
-        GHOST_ERROR("`notified_state` has non-enumerator value %d.",
-                    static_cast<int>(notified_state));
-        break;
+        return os << "Notified";
     }
-    return os;
   }
 
   // The notification state.

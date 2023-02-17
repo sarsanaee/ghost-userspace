@@ -39,6 +39,8 @@ static long (*bpf_ghost_resched_cpu)(__u32 cpu, __u64 cpu_seqnum) = (void *) 300
 #define SCHED_GHOST 18
 #define TASK_RUNNING 0
 #define TASK_DEAD 0x0080
+#define MAX_RT_PRIO 100
+#define SEND_TASK_LATCHED (1 << 10)
 
 static inline u64 min(u64 x, u64 y)
 {
@@ -76,5 +78,39 @@ static inline bool is_agent(struct task_struct *p)
 static inline bool is_traced_ghost(struct task_struct *p) {
   return task_has_ghost_policy(p) && !is_agent(p);
 }
+
+#define READ_ONCE(x) (*(volatile typeof(x) *)&(x))
+#define WRITE_ONCE(x, val) ((*(volatile typeof(x) *)&(x)) = val)
+
+/*
+ * Since this is in rodata, the verifier will drop all the bpf_printks, since
+ * they are dead code.  That allows us to pass verification if we lack the CAP
+ * to make a bpf_printk call.
+ */
+const volatile bool enable_bpf_printd;
+#define bpf_printd(...) ({						\
+	if (enable_bpf_printd)						\
+		bpf_printk(__VA_ARGS__);				\
+})
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+/*
+ * No inline to avoid the dreaded:
+ * "dereference of modified ctx ptr R6 off=3 disallowed"
+ */
+static void __attribute__((noinline)) set_dont_idle(struct bpf_ghost_sched *ctx)
+{
+	ctx->dont_idle = true;
+}
+
+static void __attribute__((noinline)) clr_dont_idle(struct bpf_ghost_sched *ctx)
+{
+	ctx->dont_idle = false;
+}
+#pragma GCC diagnostic pop
+
+/* Helper to prevent the compiler from optimizing bounds check on x. */
+#define BPF_MUST_CHECK(x) ({ asm volatile ("" : "+r"(x)); x; })
 
 #endif  // GHOST_LIB_BPF_COMMON_BPF_H_

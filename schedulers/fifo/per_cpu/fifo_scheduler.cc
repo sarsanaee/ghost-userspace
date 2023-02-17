@@ -6,6 +6,8 @@
 
 #include "schedulers/fifo/per_cpu/fifo_scheduler.h"
 
+#include <memory>
+
 namespace ghost {
 
 FifoScheduler::FifoScheduler(Enclave* enclave, CpuList cpulist,
@@ -213,12 +215,6 @@ void FifoScheduler::TaskSwitchto(FifoTask* task, const Message& msg) {
   TaskOffCpu(task, /*blocked=*/true, /*from_switchto=*/false);
 }
 
-void FifoScheduler::ValidatePreExitState() {
-  for (const Cpu& cpu : cpus()) {
-    CpuState* cs = cpu_state(cpu);
-    CHECK(cs->run_queue.Empty());
-  }
-}
 
 void FifoScheduler::TaskOffCpu(FifoTask* task, bool blocked,
                                bool from_switchto) {
@@ -381,8 +377,8 @@ void FifoRq::Erase(FifoTask* task) {
 std::unique_ptr<FifoScheduler> MultiThreadedFifoScheduler(Enclave* enclave,
                                                           CpuList cpulist) {
   auto allocator = std::make_shared<ThreadSafeMallocTaskAllocator<FifoTask>>();
-  auto scheduler = absl::make_unique<FifoScheduler>(enclave, std::move(cpulist),
-                                                    std::move(allocator));
+  auto scheduler = std::make_unique<FifoScheduler>(enclave, std::move(cpulist),
+                                                   std::move(allocator));
   return scheduler;
 }
 
@@ -421,10 +417,7 @@ std::ostream& operator<<(std::ostream& os, const FifoTaskState& state) {
       return os << "kQueued";
     case FifoTaskState::kOnCpu:
       return os << "kOnCpu";
-      // No default (exhaustive switch)
   }
-
-  return os << static_cast<int>(state);  // 'state' has a non-enumerator value.
 }
 
 }  //  namespace ghost

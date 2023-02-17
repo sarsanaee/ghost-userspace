@@ -9,10 +9,13 @@
 #include <sched.h>
 #include <sys/timerfd.h>
 
+#include <memory>
+
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/random/random.h"
+#include "absl/status/status.h"
 #include "lib/channel.h"
 #include "lib/scheduler.h"
 
@@ -77,6 +80,8 @@ constexpr int kPingAgents = 2;
 constexpr int kRpcSerialize = 3;
 constexpr int kRpcDeserializeArgs = 4;
 constexpr int kGetStatusWordInfo = 5;
+constexpr int kRpcSerializeStatus = 6;
+constexpr int kRpcSerializeStatusOr = 7;
 
 template <size_t MAX_NOTIFICATIONS = 1, class EnclaveType = LocalEnclave>
 class FullSimpleAgent : public FullAgent<EnclaveType> {
@@ -117,8 +122,8 @@ class FullSimpleAgent : public FullAgent<EnclaveType> {
   ~FullSimpleAgent() override { this->TerminateAgentTasks(); }
 
   std::unique_ptr<Agent> MakeAgent(const Cpu& cpu) override {
-    return absl::make_unique<SimpleAgent<MAX_NOTIFICATIONS>>(&this->enclave_,
-                                                             cpu);
+    return std::make_unique<SimpleAgent<MAX_NOTIFICATIONS>>(&this->enclave_,
+                                                            cpu);
   }
 
   void RpcHandler(int64_t req, const AgentRpcArgs& args,
@@ -141,11 +146,16 @@ class FullSimpleAgent : public FullAgent<EnclaveType> {
         }
         break;
       case kRpcSerialize:
-        response.buffer.Serialize<RpcTestData>(kRpcTestData);
+        ASSERT_EQ(response.buffer.Serialize<RpcTestData>(kRpcTestData),
+                  absl::OkStatus());
         break;
-      case kRpcDeserializeArgs:
-        response_code = args.buffer.Deserialize<RpcTestData>().three;
+      case kRpcDeserializeArgs: {
+        absl::StatusOr<RpcTestData> deserialized =
+            args.buffer.Deserialize<RpcTestData>();
+        ASSERT_EQ(deserialized.status(), absl::OkStatus());
+        response_code = deserialized.value().three;
         break;
+      }
       case kGetStatusWordInfo:
         ghost_sw_info info;
         response_code = 0;
@@ -153,6 +163,13 @@ class FullSimpleAgent : public FullAgent<EnclaveType> {
                                              args.arg1, info) != 0) {
           response_code = errno;
         }
+        break;
+      case kRpcSerializeStatus:
+        ASSERT_EQ(response.buffer.SerializeStatus(absl::OkStatus()),
+                  absl::OkStatus());
+        break;
+      case kRpcSerializeStatusOr:
+        ASSERT_EQ(response.buffer.SerializeStatusOr<int>(42), absl::OkStatus());
         break;
       default:
         response_code = -1;
@@ -201,12 +218,14 @@ TEST(AgentTest, RpcSerializationSimple) {
     .z = INT_MIN,
   };
   AgentRpcResponse response;
-  response.buffer.Serialize<MyStruct>(s);
-  MyStruct deserialized = response.buffer.Deserialize<MyStruct>();
+  ASSERT_EQ(response.buffer.Serialize<MyStruct>(s), absl::OkStatus());
+  absl::StatusOr<MyStruct> deserialized =
+      response.buffer.Deserialize<MyStruct>();
+  ASSERT_EQ(deserialized.status(), absl::OkStatus());
 
-  EXPECT_EQ(s.x, deserialized.x);
-  EXPECT_EQ(s.y, deserialized.y);
-  EXPECT_EQ(s.z, deserialized.z);
+  EXPECT_EQ(s.x, deserialized.value().x);
+  EXPECT_EQ(s.y, deserialized.value().y);
+  EXPECT_EQ(s.z, deserialized.value().z);
 }
 
 // Basic test of serialization/deserialization, doing these operations in-place
@@ -222,11 +241,13 @@ TEST(AgentTest, RpcSerializationSimpleSize) {
       .z = INT_MIN,
   };
   AgentRpcResponse response;
-  response.buffer.Serialize<MyStruct>(s, sizeof(s));
+  ASSERT_EQ(response.buffer.Serialize<MyStruct>(s, sizeof(s)),
+            absl::OkStatus());
 
   MyStruct deserialized;
   memset(&deserialized, 0, sizeof(deserialized));
-  response.buffer.Deserialize<MyStruct>(deserialized, sizeof(s));
+  ASSERT_EQ(response.buffer.Deserialize<MyStruct>(deserialized, sizeof(s)),
+                                                  absl::OkStatus());
 
   EXPECT_EQ(s.x, deserialized.x);
   EXPECT_EQ(s.y, deserialized.y);
@@ -245,14 +266,16 @@ TEST(AgentTest, RpcSerializationSimpleVector) {
     to_serialize.push_back({.x = i, .y = i + 2, .z = INT_MIN + i});
   }
   AgentRpcResponse response;
-  response.buffer.SerializeVector<MyStruct>(to_serialize);
+  ASSERT_EQ(response.buffer.SerializeVector<MyStruct>(to_serialize),
+            absl::OkStatus());
 
-  std::vector<MyStruct> deserialized =
+  absl::StatusOr<std::vector<MyStruct>> deserialized =
       response.buffer.DeserializeVector<MyStruct>(kNumIterations);
+  ASSERT_EQ(deserialized.status(), absl::OkStatus());
   for (int i = 0; i < kNumIterations; i++) {
-    EXPECT_EQ(to_serialize[i].x, deserialized[i].x);
-    EXPECT_EQ(to_serialize[i].y, deserialized[i].y);
-    EXPECT_EQ(to_serialize[i].z, deserialized[i].z);
+    EXPECT_EQ(to_serialize[i].x, deserialized.value()[i].x);
+    EXPECT_EQ(to_serialize[i].y, deserialized.value()[i].y);
+    EXPECT_EQ(to_serialize[i].z, deserialized.value()[i].z);
   }
 }
 
@@ -260,8 +283,11 @@ TEST(AgentTest, RpcSerializationString) {
   std::vector<std::string> strings = {"Hello World", "World", "", "Hello"};
   AgentRpcResponse response;
   for (const std::string& s : strings) {
-    response.buffer.SerializeString(s);
-    EXPECT_EQ(response.buffer.DeserializeString(), s);
+    ASSERT_EQ(response.buffer.SerializeString(s), absl::OkStatus());
+    absl::StatusOr<std::string> deserialized =
+        response.buffer.DeserializeString();
+    ASSERT_EQ(deserialized.status(), absl::OkStatus());
+    EXPECT_EQ(deserialized.value(), s);
   }
 }
 
@@ -273,9 +299,51 @@ TEST(AgentTest, RpcSerialization) {
   const AgentRpcResponse& response = ap.RpcWithResponse(kRpcSerialize);
   ASSERT_EQ(response.response_code, 0);
 
-  FullSimpleAgent<>::RpcTestData data =
+  absl::StatusOr<FullSimpleAgent<>::RpcTestData> data =
       response.buffer.Deserialize<FullSimpleAgent<>::RpcTestData>();
-  EXPECT_EQ(data, FullSimpleAgent<>::kRpcTestData);
+  ASSERT_EQ(data.status(), absl::OkStatus());
+  EXPECT_EQ(data.value(), FullSimpleAgent<>::kRpcTestData);
+}
+
+TEST(AgentTest, RpcSerializationErrorStatus) {
+  AgentRpcResponse response;
+
+  ASSERT_TRUE(response.buffer.SerializeStatus(absl::UnknownError("")).ok());
+
+  absl::StatusOr<TrivialStatus> status_or = response.buffer.DeserializeStatus();
+  ASSERT_TRUE(status_or.status().ok());
+  ASSERT_FALSE(status_or.value().ok());
+}
+
+TEST(AgentTest, RpcSerializationErrorStatusOr) {
+  AgentRpcResponse response;
+
+  ASSERT_TRUE(
+      response.buffer.SerializeStatusOr<int>(absl::UnknownError("")).ok());
+
+  absl::StatusOr<absl::StatusOr<int>> status_or =
+      response.buffer.DeserializeStatusOr<int>();
+  ASSERT_TRUE(status_or.status().ok());
+  ASSERT_FALSE(status_or.value().ok());
+}
+
+TEST(AgentTest, RpcDeserializationWithoutSerialization) {
+  AgentRpcResponse response;
+
+  int out;
+  EXPECT_FALSE(response.buffer.Deserialize(out, sizeof(out)).ok());
+
+  EXPECT_FALSE(response.buffer.Deserialize<int>().ok());
+
+  EXPECT_FALSE(response.buffer.DeserializeString().ok());
+
+  EXPECT_FALSE(response.buffer.DeserializeVector<int>(1).ok());
+
+  EXPECT_FALSE(response.buffer.DeserializeString().ok());
+
+  EXPECT_FALSE(response.buffer.DeserializeStatus().ok());
+
+  EXPECT_FALSE(response.buffer.DeserializeStatusOr<int>().ok());
 }
 
 // Test serialization of an object the same size as the buffer.
@@ -289,9 +357,29 @@ TEST(AgentTest, RpcSerializationMaxSize) {
   const LargeStruct s = {
     .arr = {val},
   };
-  response.Serialize<LargeStruct>(s);
-  LargeStruct deserialized = response.Deserialize<LargeStruct>();
-  EXPECT_EQ(s.arr, deserialized.arr);
+  ASSERT_EQ(response.Serialize<LargeStruct>(s), absl::OkStatus());
+  absl::StatusOr<LargeStruct> deserialized =
+      response.Deserialize<LargeStruct>();
+  ASSERT_EQ(deserialized.status(), absl::OkStatus());
+  EXPECT_EQ(s.arr, deserialized.value().arr);
+}
+
+TEST(AgentTest, RpcSerializationExceedMaxSize) {
+  constexpr size_t kResponseSize = 100;
+  struct LargeStruct {
+    std::array<std::byte, kResponseSize + 1> arr;
+  };
+  AgentRpcBuffer<kResponseSize> response;
+  constexpr std::byte val{10};
+  constexpr LargeStruct s = {
+    .arr = {val},
+  };
+  EXPECT_NE(response.Serialize<LargeStruct>(s, kResponseSize + 1),
+            absl::OkStatus());
+
+  LargeStruct l;
+  EXPECT_NE(response.Deserialize<LargeStruct>(l, kResponseSize + 1),
+            absl::OkStatus());
 }
 
 // Test serialization of RPC arguments.
@@ -302,10 +390,55 @@ TEST(AgentTest, RpcArgSerialization) {
   const FullSimpleAgent<>::RpcTestData arg_data =
       FullSimpleAgent<>::kRpcTestData;
   AgentRpcArgs args;
-  args.buffer.Serialize<FullSimpleAgent<>::RpcTestData>(arg_data);
+  EXPECT_EQ(args.buffer.Serialize<FullSimpleAgent<>::RpcTestData>(arg_data),
+            absl::OkStatus());
 
   int64_t response = ap.Rpc(kRpcDeserializeArgs, args);
   EXPECT_EQ(response, arg_data.three);
+}
+
+// Test serialization of absl::Status.
+TEST(AgentTest, RpcStatusSerialization) {
+  auto ap = AgentProcess<FullSimpleAgent<>, AgentConfig>(
+      AgentConfig(MachineTopology(), MachineTopology()->all_cpus()));
+
+  const AgentRpcResponse& response = ap.RpcWithResponse(kRpcSerializeStatus);
+  ASSERT_EQ(response.response_code, 0);
+
+  absl::StatusOr<TrivialStatus> status_or = response.buffer.DeserializeStatus();
+  ASSERT_EQ(status_or.status(), absl::OkStatus());
+  EXPECT_EQ(status_or.value().ToStatus(), absl::OkStatus());
+}
+
+// Test serialization of absl::StatusOr.
+TEST(AgentTest, RpcStatusOrSerialization) {
+  auto ap = AgentProcess<FullSimpleAgent<>, AgentConfig>(
+      AgentConfig(MachineTopology(), MachineTopology()->all_cpus()));
+
+  const AgentRpcResponse& response = ap.RpcWithResponse(kRpcSerializeStatusOr);
+  ASSERT_EQ(response.response_code, 0);
+
+  absl::StatusOr<absl::StatusOr<int>> status_or =
+      response.buffer.DeserializeStatusOr<int>();
+  ASSERT_EQ(status_or.status(), absl::OkStatus());
+  ASSERT_EQ(status_or.value().status(), absl::OkStatus());
+  EXPECT_EQ(status_or.value().value(), 42);
+}
+
+// Test serialization of absl::StatusOr<std::string>.
+TEST(AgentTest, RpcStatusOrStringSerialization) {
+  std::vector<std::string> strings = {"Hello World", "World", "", "Hello"};
+  AgentRpcResponse response;
+  for (const std::string& s : strings) {
+    absl::StatusOr<std::string> status_or = s;
+    ASSERT_EQ(response.buffer.SerializeStatusOrString(status_or),
+              absl::OkStatus());
+    absl::StatusOr<absl::StatusOr<std::string>> deserialized =
+        response.buffer.DeserializeStatusOrString();
+    ASSERT_EQ(deserialized.status(), absl::OkStatus());
+    ASSERT_EQ(deserialized.value().status(), absl::OkStatus());
+    EXPECT_EQ(deserialized.value().value(), s);
+  }
 }
 
 TEST(AgentTest, ExitHandler) {
@@ -400,7 +533,7 @@ class FullTickAgent : public FullAgent<EnclaveType> {
   ~FullTickAgent() override { this->TerminateAgentTasks(); }
 
   std::unique_ptr<Agent> MakeAgent(const Cpu& cpu) override {
-    return absl::make_unique<SpinningAgent>(&this->enclave_, cpu);
+    return std::make_unique<SpinningAgent>(&this->enclave_, cpu);
   }
 
   void RpcHandler(int64_t req, const AgentRpcArgs& args,
@@ -524,7 +657,7 @@ TEST(AgentTest, MsgTimerExpired) {
 
   // Boilerplate so we can create agents.
   auto enclave =
-      absl::make_unique<LocalEnclave>(AgentConfig(topology, agent_cpus));
+      std::make_unique<LocalEnclave>(AgentConfig(topology, agent_cpus));
 
   // Randomly assign one agent as the designated receiver of
   // CPU_TIMER_EXPIRED msg when timer expires.
@@ -580,7 +713,7 @@ TEST(AgentTest, MsgTimerExpired) {
     //
     // The channel is configured to wakeup the agent when the kernel produces
     // a message into it.
-    auto channel = absl::make_unique<LocalChannel>(
+    auto channel = std::make_unique<LocalChannel>(
         GHOST_MAX_QUEUE_ELEMS, numa_node, MachineTopology()->ToCpuList({cpu}));
     agents.emplace_back(
         new CallbackAgent(enclave.get(), cpu, channel.get(),
@@ -653,7 +786,7 @@ TEST(AgentTest, MsgCpuNotIdle) {
   ASSERT_THAT(agent_cpus.Size(), Gt(0));
 
   auto enclave =
-      absl::make_unique<LocalEnclave>(AgentConfig(topology, agent_cpus));
+      std::make_unique<LocalEnclave>(AgentConfig(topology, agent_cpus));
 
   // Randomly assign one agent as the designated receiver of MSG_CPU_NOT_IDLE.
   absl::BitGen rng;
@@ -682,7 +815,7 @@ TEST(AgentTest, MsgCpuNotIdle) {
   std::vector<std::unique_ptr<LocalChannel>> channels;
   std::vector<std::unique_ptr<CallbackAgent>> agents;
   for (const Cpu& cpu : agent_cpus) {
-    auto channel = absl::make_unique<LocalChannel>(
+    auto channel = std::make_unique<LocalChannel>(
         GHOST_MAX_QUEUE_ELEMS, numa_node, MachineTopology()->ToCpuList({cpu}));
     agents.emplace_back(new CallbackAgent(enclave.get(), cpu, channel.get(),
                                           {
@@ -784,7 +917,7 @@ TEST(AgentTest, SetSched) {
   // arbitrary but safe since there must be one cpu.
   constexpr int agent_cpu = 0;
   Topology* topology = MachineTopology();
-  auto enclave = absl::make_unique<LocalEnclave>(
+  auto enclave = std::make_unique<LocalEnclave>(
       AgentConfig(topology, topology->ToCpuList(std::vector<int>{agent_cpu})));
 
   LocalChannel default_channel(GHOST_MAX_QUEUE_ELEMS, /*node=*/0);
@@ -825,6 +958,170 @@ TEST(AgentTest, GetStatusWordInfo) {
   // Bogus (impossible) cpu.
   rpc_args.arg1 = topology->num_cpus();
   EXPECT_THAT(ap.Rpc(kGetStatusWordInfo, rpc_args), Eq(EINVAL));
+}
+
+
+// Single-producer/single-consumer synchronization struct to run a function and
+// report OK.  Used by an AgentRpc handler (CFS thread) and an agent task.
+struct Runner {
+  std::atomic<bool> run_func = false;
+  std::atomic<bool> ran_func = false;
+  bool ok = false;
+};
+
+// Single-cpu spinning agent.  Tests that we can detect it blocking and waking.
+class BlockTestAgent : public LocalAgent {
+ public:
+  BlockTestAgent(Enclave* enclave, Cpu cpu, LocalChannel* channel,
+                 Runner* runner) :
+    LocalAgent(enclave, cpu),
+    channel_(channel),
+    runner_(runner) {}
+
+ protected:
+  void AgentThread() override {
+    SignalReady();
+    WaitForEnclaveReady();
+
+    while (!Finished()) {
+      BarrierToken agent_barrier = status_word().barrier();
+      bool prio_boost = status_word().boosted_priority();
+      if (prio_boost) {
+        RunRequest* req = enclave()->GetRunRequest(cpu());
+        req->LocalYield(agent_barrier, RTLA_ON_IDLE);
+      }
+      Pause();
+
+      if (runner_->run_func.load()) {
+        runner_->run_func.store(false);
+
+        enclave_->SetDeliverAgentRunnability(true);
+        // Ensure at least one block and wakeup cycle.
+        absl::SleepFor(absl::Milliseconds(5));
+        enclave_->SetDeliverAgentRunnability(false);
+
+        Message msg;
+        bool saw_blocked = false;
+        bool saw_wakeup = false;
+        while (!(msg = Peek(channel_)).empty()) {
+          switch (msg.type()) {
+            case MSG_CPU_AGENT_BLOCKED:
+              saw_blocked = true;
+              break;
+            case MSG_CPU_AGENT_WAKEUP:
+              saw_wakeup = true;
+              break;
+          }
+          Consume(channel_, msg);
+        }
+
+        runner_->ok = saw_blocked && saw_wakeup;
+        runner_->ran_func.store(true);
+      }
+    }
+  }
+
+ private:
+  LocalChannel* channel_;
+  Runner* runner_;
+};
+
+class RunnerConfig : public AgentConfig {
+ public:
+  RunnerConfig(int cpu_id)
+      : AgentConfig(MachineTopology(),
+                    MachineTopology()->ToCpuList(std::vector<int>{cpu_id})) {}
+};
+
+constexpr int kRunBlockTest = 42;
+
+template <class EnclaveType = LocalEnclave>
+class FullBlockTestAgent : public FullAgent<EnclaveType> {
+#define AGENT_AS(agent) agent_down_cast<BlockTestAgent*>((agent).get())
+
+ public:
+  explicit FullBlockTestAgent(const RunnerConfig& config)
+      : FullAgent<EnclaveType>(config),
+        default_channel_(GHOST_MAX_QUEUE_ELEMS, /*numa_node_=*/0) {
+    default_channel_.SetEnclaveDefault();
+    this->StartAgentTasks();
+    // Toggling SetDeliverAgentRunnability() from an agent task is dangerous.
+    // Normally, you shouldn't open files from an agent task, since it grabs a
+    // kernel mutex.
+    this->enclave_.SetLiveDangerously(true);
+    this->enclave_.Ready();
+  }
+
+  ~FullBlockTestAgent() override { this->TerminateAgentTasks(); }
+
+  std::unique_ptr<Agent> MakeAgent(const Cpu& cpu) override {
+    return std::make_unique<BlockTestAgent>(&this->enclave_, cpu,
+                                            &default_channel_, &runner_);
+  }
+
+  void RpcHandler(int64_t req, const AgentRpcArgs& args,
+                  AgentRpcResponse& response) override {
+    switch (req) {
+      case kRunBlockTest:
+        runner_.run_func.store(true);
+        while (!runner_.ran_func.load()) {
+          Pause();
+        }
+        if (runner_.ok) {
+          response.response_code = 0;
+        } else {
+          response.response_code = -1;
+        }
+        break;
+      default:
+        response.response_code = -1;
+        return;
+    }
+  }
+
+ private:
+  LocalChannel default_channel_;
+  Runner runner_;
+#undef AGENT_AS
+};
+
+
+TEST(AgentTest, AgentBlock) {
+  constexpr int kCpuNum = 0;
+
+  auto ap = AgentProcess<FullBlockTestAgent<>, RunnerConfig>(
+         RunnerConfig(kCpuNum));
+
+  ASSERT_EQ(ap.Rpc(kRunBlockTest), 0);
+}
+
+TEST(AgentTest, FailToBecomeAgent) {
+  GhostHelper()->InitCore();
+  Topology* topology = MachineTopology();
+
+  constexpr int kAgentCpu = 0;
+  auto enclave = std::make_unique<LocalEnclave>(
+      AgentConfig(topology, topology->ToCpuList(std::vector<int>{kAgentCpu})));
+
+  // Stash cpu affinity.
+  CpuList orig_affinity = MachineTopology()->EmptyCpuList();
+  EXPECT_THAT(GhostHelper()->SchedGetAffinity(Gtid::Current(), orig_affinity),
+              Eq(0));
+
+  // Try to become agent with expectation of failure since we don't have
+  // a default queue.
+  int ret = GhostHelper()->SchedAgentEnterGhost(
+      enclave->GetCtlFd(), MachineTopology()->cpu(kAgentCpu), /*queue_fd=*/-1);
+  EXPECT_THAT(ret, Eq(-1));
+  EXPECT_THAT(errno, Eq(ENXIO));  /* no default queue */
+
+  // Get the cpu affinity and make sure it matches `orig_affinity`.
+  CpuList curr_affinity = MachineTopology()->EmptyCpuList();
+  EXPECT_THAT(GhostHelper()->SchedGetAffinity(Gtid::Current(), curr_affinity),
+              Eq(0));
+  EXPECT_THAT(curr_affinity, Eq(orig_affinity));
+
+  EXPECT_THAT(sched_getscheduler(0), Eq(SCHED_OTHER));
 }
 
 }  // namespace

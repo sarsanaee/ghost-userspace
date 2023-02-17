@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/bind_front.h"
@@ -83,27 +84,19 @@ struct ShinjukuTask : public Task<> {
 
   friend std::ostream& operator<<(std::ostream& os,
                                   ShinjukuTask::RunState run_state) {
-    os << RunStateToString(run_state);
-    return os;
+    return os << RunStateToString(run_state);
   }
 
   friend std::ostream& operator<<(
       std::ostream& os, ShinjukuTask::UnscheduleLevel unschedule_level) {
     switch (unschedule_level) {
       case ShinjukuTask::UnscheduleLevel::kNoUnschedule:
-        os << "No Unschedule";
-        break;
+        return os << "No Unschedule";
       case ShinjukuTask::UnscheduleLevel::kCouldUnschedule:
-        os << "Could Unschedule";
-        break;
+        return os << "Could Unschedule";
       case ShinjukuTask::UnscheduleLevel::kMustUnschedule:
-        os << "Must Unschedule";
-        break;
-        // We will get a compile error if a new member is added to the
-        // `ShinjukuTask::UnscheduleLevel` enum and a corresponding case is not
-        // added here.
+        return os << "Must Unschedule";
     }
-    return os;
   }
 
   RunState run_state = RunState::kBlocked;
@@ -372,8 +365,8 @@ class FullShinjukuAgent : public FullAgent<EnclaveType> {
   }
 
   std::unique_ptr<Agent> MakeAgent(const Cpu& cpu) override {
-    return absl::make_unique<ShinjukuAgent>(&this->enclave_, cpu,
-                                            global_scheduler_.get());
+    return std::make_unique<ShinjukuAgent>(&this->enclave_, cpu,
+                                           global_scheduler_.get());
   }
 
   void RpcHandler(int64_t req, const AgentRpcArgs& args,

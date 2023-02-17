@@ -15,8 +15,7 @@ namespace {
 std::string BoolToString(bool b) { return b ? "true" : "false"; }
 }  // namespace
 
-std::ostream& operator<<(std::ostream& os,
-                         const Orchestrator::Options& options) {
+std::ostream& operator<<(std::ostream& os, const Options& options) {
   // Put the options and their values into an 'std::map' so that we can print
   // out the option/value pairs in alphabetical order.
   std::map<std::string, std::string> flags;
@@ -30,13 +29,31 @@ std::ostream& operator<<(std::ostream& os,
   flags["rocksdb_db_path"] = options.rocksdb_db_path.string();
   flags["throughput"] = std::to_string(options.throughput);
   flags["range_query_ratio"] = std::to_string(options.range_query_ratio);
-  flags["load_generator_cpu"] = std::to_string(options.load_generator_cpu);
-  flags["cfs_dispatcher_cpu"] = std::to_string(options.cfs_dispatcher_cpu);
+
+  std::string load_generator_cpus;
+  for (size_t i = 0; i < options.load_generator_cpus.Size(); i++) {
+    load_generator_cpus += options.load_generator_cpus.GetNthCpu(i).ToString();
+    if (i < options.load_generator_cpus.Size() - 1) {
+      load_generator_cpus += " ";
+    }
+  }
+  flags["load_generator_cpus"] = load_generator_cpus;
+
+  std::string cfs_dispatcher_cpus;
+  for (size_t i = 0; i < options.cfs_dispatcher_cpus.Size(); i++) {
+    cfs_dispatcher_cpus += options.cfs_dispatcher_cpus.GetNthCpu(i).ToString();
+    if (i < options.cfs_dispatcher_cpus.Size() - 1) {
+      cfs_dispatcher_cpus += " ";
+    }
+  }
+  flags["cfs_dispatcher_cpus"] = cfs_dispatcher_cpus;
+
   flags["num_workers"] = std::to_string(options.num_workers);
 
-  for (int i = 0; i < options.worker_cpus.size(); i++) {
-    flags["worker_cpus"] += std::to_string(options.worker_cpus[i]);
-    if (i < options.worker_cpus.size() - 1) {
+  for (int i = 0; i < options.worker_cpus.Size(); i++) {
+    flags["worker_cpus"] +=
+        std::to_string(options.worker_cpus.GetNthCpu(i).id());
+    if (i < options.worker_cpus.Size() - 1) {
       flags["worker_cpus"] += " ";
     }
   }
@@ -46,9 +63,8 @@ std::ostream& operator<<(std::ostream& os,
           ? "spin"
           : "futex";
   flags["ghost_wait_type"] =
-      options.ghost_wait_type == Orchestrator::GhostWaitType::kPrioTable
-          ? "prio_table"
-          : "futex";
+      options.ghost_wait_type == GhostWaitType::kPrioTable ? "prio_table"
+                                                           : "futex";
   flags["get_duration"] = absl::FormatDuration(options.get_duration);
   flags["range_duration"] = absl::FormatDuration(options.range_duration);
   flags["get_exponential_mean"] =
@@ -78,28 +94,36 @@ Orchestrator::Orchestrator(Options options, size_t total_threads)
     : options_(options),
       total_threads_(total_threads),
       database_(options_.rocksdb_db_path),
-      network_(options_.throughput, options_.range_query_ratio),
       gen_(total_threads),
       first_run_(total_threads),
       thread_pool_(total_threads) {
   CHECK(!options_.rocksdb_db_path.empty());
   CHECK_GE(options_.range_query_ratio, 0.0);
   CHECK_LE(options_.range_query_ratio, 1.0);
-  CHECK_GE(options_.load_generator_cpu, 0);
-  CHECK_NE(options_.load_generator_cpu, kBackgroundThreadCpu);
+  CHECK(!options_.load_generator_cpus.IsSet(kBackgroundThreadCpu));
   CHECK(options_.scheduler != ghost::GhostThread::KernelScheduler::kCfs ||
-        options_.cfs_dispatcher_cpu != kBackgroundThreadCpu);
-  CHECK(options_.scheduler != ghost::GhostThread::KernelScheduler::kCfs ||
-        options_.cfs_dispatcher_cpu >= 0);
-  for (const int cpu : options_.worker_cpus) {
-    CHECK_GE(cpu, 0);
-    CHECK_NE(cpu, kBackgroundThreadCpu);
+        !options_.cfs_dispatcher_cpus.IsSet(kBackgroundThreadCpu));
+
+  double throughput_per_load_generator =
+      options_.throughput / options_.load_generator_cpus.Size();
+  absl::PrintF("Each load generator generates a throughput of %f req/s\n",
+               throughput_per_load_generator);
+  for (size_t i = 0; i < options_.load_generator_cpus.Size(); i++) {
+    network_.push_back(std::make_unique<SyntheticNetwork>(
+        throughput_per_load_generator, options_.range_query_ratio));
+  }
+  for (const ghost::Cpu& cpu : options_.worker_cpus) {
+    CHECK_NE(cpu.id(), kBackgroundThreadCpu);
   }
 
-  // Add 2 to account for the load generator thread and the dispatcher thread.
-  for (size_t i = 0; i < options_.num_workers + 2; ++i) {
+  for (size_t i = 0;
+       i < options_.load_generator_cpus.Size() +
+               options_.cfs_dispatcher_cpus.Size() + options_.num_workers;
+       ++i) {
     worker_work_.push_back(std::make_unique<WorkerWork>());
     worker_work_.back()->num_requests = 0;
+    worker_work_.back()->requests.reserve(options_.batch);
+    worker_work_.back()->response.reserve(kResponseReservationSize);
 
     requests_.push_back(std::vector<Request>());
     // TODO: Can we make this smaller or use an 'std::deque' instead? I'm
@@ -135,12 +159,13 @@ Orchestrator::Orchestrator(Options options, size_t total_threads)
 
 Orchestrator::~Orchestrator() {}
 
-void Orchestrator::HandleRequest(Request& request, absl::BitGen& gen) {
+void Orchestrator::HandleRequest(Request& request, std::string& response,
+                                 absl::BitGen& gen) {
   if (request.IsGet()) {
-    HandleGet(request, gen);
+    HandleGet(request, response, gen);
   } else {
     CHECK(request.IsRange());
-    HandleRange(request, gen);
+    HandleRange(request, response, gen);
   }
 }
 
@@ -150,7 +175,8 @@ absl::Duration Orchestrator::GetThreadCpuTime() const {
   return absl::Seconds(ts.tv_sec) + absl::Nanoseconds(ts.tv_nsec);
 }
 
-void Orchestrator::HandleGet(Request& request, absl::BitGen& gen) {
+void Orchestrator::HandleGet(Request& request, std::string& response,
+                             absl::BitGen& gen) {
   CHECK(request.IsGet());
 
   absl::Duration start_duration = GetThreadCpuTime();
@@ -160,7 +186,6 @@ void Orchestrator::HandleGet(Request& request, absl::BitGen& gen) {
         Request::GetExponentialHandleTime(gen, options_.get_exponential_mean);
   }
 
-  std::string response;
   Request::Get& get = std::get<Request::Get>(request.work);
   CHECK(database_.Get(get.entry, response));
 
@@ -170,13 +195,13 @@ void Orchestrator::HandleGet(Request& request, absl::BitGen& gen) {
   }
 }
 
-void Orchestrator::HandleRange(Request& request, absl::BitGen& gen) {
+void Orchestrator::HandleRange(Request& request, std::string& response,
+                               absl::BitGen& gen) {
   CHECK(request.IsRange());
 
   absl::Duration start_duration = GetThreadCpuTime();
   absl::Duration service_time = options_.range_duration;
 
-  std::string response;
   Request::Range& range = std::get<Request::Range>(request.work);
   CHECK(database_.RangeQuery(range.start_entry, range.size, response));
 

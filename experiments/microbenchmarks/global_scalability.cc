@@ -4,6 +4,8 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
+#include <memory>
+
 #include "absl/flags/parse.h"
 #include "absl/flags/usage.h"
 #include "schedulers/edf/edf_scheduler.h"
@@ -11,6 +13,8 @@
 #include "schedulers/sol/sol_scheduler.h"
 
 ABSL_FLAG(std::string, o, "/dev/stdout", "output file");
+ABSL_FLAG(uint32_t, enclave, -1,
+          "The enclave to add threads to (when the scheduler is \"none\")");
 
 namespace ghost {
 
@@ -52,10 +56,18 @@ void SetupWorkClasses(PrioTable* table) {
   wc->period = absl::ToInt64Nanoseconds(absl::Milliseconds(100));
 }
 
+int GetEnclaveFd(int enclave) {
+  std::string enclave_path =
+      absl::StrFormat("%s/enclave_%d", GhostHelper()->kGhostfsMount, enclave);
+  int dir_fd = open(enclave_path.c_str(), O_PATH);
+  CHECK_GE(dir_fd, 0);
+  return dir_fd;
+}
+
 // This will print the result to stdout.  Due to the layers of forking, that's
 // simpler than trying to pass the result back.
 static void RunThreads(FILE* outfile, int nr_task_cpus, int nr_threads,
-                       int nr_loops) {
+                       int nr_loops, int enclave_fd) {
   if (!nr_loops) {
     fprintf(outfile, "%d,%f,%d\n", nr_task_cpus, 0.0, 0);
     return;
@@ -65,7 +77,7 @@ static void RunThreads(FILE* outfile, int nr_task_cpus, int nr_threads,
   // again before exiting the child.
   fflush(outfile);
   ForkedProcess fp([&]() {
-    std::unique_ptr<PrioTable> table = absl::make_unique<PrioTable>(
+    std::unique_ptr<PrioTable> table = std::make_unique<PrioTable>(
         nr_threads, static_cast<int>(WorkClass::kWcNum),
         PrioTable::StreamCapacity::kStreamCapacity19);
     SetupWorkClasses(table.get());
@@ -74,12 +86,14 @@ static void RunThreads(FILE* outfile, int nr_task_cpus, int nr_threads,
     threads.reserve(nr_threads);
 
     for (int i = 0; i < nr_threads; ++i) {
-      threads.emplace_back(
-          new GhostThread(GhostThread::KernelScheduler::kGhost, [&] {
+      threads.emplace_back(new GhostThread(
+          GhostThread::KernelScheduler::kGhost,
+          [&] {
             for (int i = 0; i < nr_loops; ++i) {
               sched_yield();
             }
-          }));
+          },
+          /*dir_fd=*/enclave_fd));
     }
 
     absl::Time start = absl::Now();
@@ -112,7 +126,7 @@ static void RunEdf(FILE* outfile, GlobalConfig cfg, int nr_task_cpus,
                    int nr_threads, int nr_loops) {
   auto uap = new AgentProcess<GlobalEdfAgent<LocalEnclave>, GlobalConfig>(cfg);
 
-  RunThreads(outfile, nr_task_cpus, nr_threads, nr_loops);
+  RunThreads(outfile, nr_task_cpus, nr_threads, nr_loops, /*enclave_fd=*/-1);
 
   delete uap;
 }
@@ -122,7 +136,7 @@ static void RunShinjuku(FILE* outfile, ShinjukuConfig cfg, int nr_task_cpus,
   auto uap =
       new AgentProcess<FullShinjukuAgent<LocalEnclave>, ShinjukuConfig>(cfg);
 
-  RunThreads(outfile, nr_task_cpus, nr_threads, nr_loops);
+  RunThreads(outfile, nr_task_cpus, nr_threads, nr_loops, /*enclave_fd=*/-1);
 
   delete uap;
 }
@@ -131,7 +145,7 @@ static void RunSol(FILE* outfile, SolConfig cfg, int nr_task_cpus,
                    int nr_threads, int nr_loops) {
   auto uap = new AgentProcess<FullSolAgent<LocalEnclave>, SolConfig>(cfg);
 
-  RunThreads(outfile, nr_task_cpus, nr_threads, nr_loops);
+  RunThreads(outfile, nr_task_cpus, nr_threads, nr_loops, /*enclave_fd=*/-1);
 
   delete uap;
 }
@@ -226,6 +240,8 @@ enum class Sched {
   kEdf,
   kShinjuku,
   kSol,
+  kNone,  // Run the experiment without starting a ghOSt scheduler
+          // automatically.
 };
 static Sched sched_type;
 static const char usage[] =
@@ -281,6 +297,8 @@ int main(int argc, char* argv[]) {
     sched_type = Sched::kShinjuku;
   } else if (!strcmp(pos_args[1], "sol")) {
     sched_type = Sched::kSol;
+  } else if (!strcmp(pos_args[1], "none")) {
+    sched_type = Sched::kNone;
   } else {
     fprintf(stderr, "Unrecognized scheduler '%s'\n", pos_args[1]);
     exit(1);
@@ -318,8 +336,20 @@ int main(int argc, char* argv[]) {
         break;
       }
       case Sched::kSol: {
-        ghost::SolConfig cfg(t, cpus, t->cpu(global_cpu));
+        ghost::SolConfig cfg(
+            t, cpus, t->cpu(global_cpu),
+            /*preemption_time_slice=*/absl::InfiniteDuration());
         ghost::RunSol(outfile, cfg, nr_task_cpus, nr_threads, nr_loops);
+        break;
+      }
+      case Sched::kNone: {
+        static const uint32_t kEnclave = absl::GetFlag(FLAGS_enclave);
+        int enclave_fd = (kEnclave == -1) ? -1 : ghost::GetEnclaveFd(kEnclave);
+        ghost::RunThreads(outfile, nr_task_cpus, nr_threads, nr_loops,
+                          enclave_fd);
+        if (enclave_fd >= 0) {
+          CHECK_EQ(close(enclave_fd), 0);
+        }
         break;
       }
     }

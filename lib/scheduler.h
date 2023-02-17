@@ -8,6 +8,7 @@
 #ifndef GHOST_LIB_SCHEDULER_H_
 #define GHOST_LIB_SCHEDULER_H_
 
+#include <atomic>
 #include <memory>
 #include <type_traits>
 #include <unordered_map>
@@ -19,6 +20,53 @@
 #include "lib/ghost.h"
 
 namespace ghost {
+
+// A minimal sequence number class implementation that wraps the atomic. There
+// are two different usages around this implementation:
+//
+// For operations where a user does not need any memory guarantees:
+//   // Memory writes here may be reordered to after the following line.
+//   uint32_t seqnum = task->seqnum;
+//
+//   task->seqnum = seqnum;
+//   // Memory writes here may be reordered to before the above line.
+//
+// For operations where a user needs memory guarantees, especially in message
+// draining loop (i.e., any task state changes before increasing the sequence
+// number should be visible to anyone who `load`s the updated sequence number):
+//   uint32_t seqnum = ...;
+//   // Memory writes here should be visible below the following line.
+//   task->seqnum.store(seqnum);
+//
+//   uint32_t seqnum = task->seqnum.load();
+//   // All memory writes before the most recent task->seqnum.store() should be
+//   // visible here.
+class Seqnum {
+ public:
+  // Loads the sequence number without memory ordering guarantee.
+  operator uint32_t() const {
+    return seqnum_.load(std::memory_order_relaxed);
+  }
+
+  // Stores the sequence number without memory ordering guarantee.
+  Seqnum& operator=(uint32_t seqnum) {
+    seqnum_.store(seqnum, std::memory_order_relaxed);
+    return *this;
+  }
+
+  // Loads the sequence number with acquire semantics.
+  uint32_t load() {
+    return seqnum_.load(std::memory_order_acquire);
+  }
+
+  // Stores the sequence number with release semantics.
+  void store(uint32_t seqnum) {
+    seqnum_.store(seqnum, std::memory_order_release);
+  }
+
+ private:
+  std::atomic<uint32_t> seqnum_{0};
+};
 
 // REQUIRES: All Task implementations should derive from Task.
 template <class StatusWordType = LocalStatusWord>
@@ -32,13 +80,16 @@ struct Task {
   // in-order and no messages were dropped.
   // REQUIRES: Should be invoked for each message associated with *this.
   inline void Advance(uint32_t next_seqnum) {
-    CHECK_EQ(seqnum + 1, next_seqnum);  // Assert no missed messages for now.
-    seqnum = next_seqnum;
+    // Note: next_seqnum could be greater than seqnum + 1 if BPF has consumed
+    // messages. We only assert that events have not been reordered with this
+    // check.
+    CHECK_GT(next_seqnum, seqnum);
+    seqnum.store(next_seqnum);
   }
 
   Gtid gtid;
   StatusWordType status_word;
-  uint32_t seqnum = -1;
+  Seqnum seqnum;
 };
 
 // A minimal Scheduler-base class.  Contrary to its name, the majority of this
@@ -73,15 +124,28 @@ class Scheduler {
 
   // All schedulers must have some channel that is "default".
   virtual Channel& GetDefaultChannel() = 0;
+  // Gets the right channel for the current agent with cpu information. Should
+  // be called at the beginning of the agent's thread body. Should return the
+  // default channel if the channel for the agent cannot be decided yet or the
+  // scheduler would like to postpone this decision.
+  virtual Channel& GetAgentChannel(const Cpu& cpu) {
+    return GetDefaultChannel();
+  }
 
   // Returns a (const) pointer to this scheduler's topology.
-  const Topology* SchedTopology() const { return enclave_->topology(); }
+  const Topology* SchedTopology() const { return topology(); }
 
   virtual void DumpState(const Cpu& cpu, int flags) {}
 
  protected:
   Enclave* enclave() const { return enclave_; }
-  Topology* topology() const { return enclave_->topology(); }
+  Topology* topology() const {
+    if (enclave_) {
+      return enclave_->topology();
+    } else {
+      return MachineTopology();
+    }
+  }
   const CpuList& cpus() const { return cpus_; }
 
  private:
@@ -324,6 +388,7 @@ class BasicDispatchScheduler : public Scheduler {
   virtual void TaskPreempted(TaskType* task, const Message& msg) = 0;
   virtual void TaskSwitchto(TaskType* task, const Message& msg) {}
   virtual void TaskAffinityChanged(TaskType* task, const Message& msg) {}
+  virtual void TaskPriorityChanged(TaskType* task, const Message& msg) {}
   virtual void TaskLatched(TaskType* task, const Message& msg) {}
 
   virtual void TaskDiscovered(TaskType* task) {}
@@ -333,6 +398,10 @@ class BasicDispatchScheduler : public Scheduler {
   virtual void CpuTick(const Message& msg) {}
   virtual void CpuNotIdle(const Message& msg) {}
   virtual void CpuTimerExpired(const Message& msg) {}
+  virtual void CpuAvailable(const Message& msg) {}
+  virtual void CpuBusy(const Message& msg) {}
+  virtual void AgentBlocked(const Message& msg) {}
+  virtual void AgentWakeup(const Message& msg) {}
 
   TaskAllocator<TaskType>* allocator() const { return allocator_.get(); }
 
@@ -449,6 +518,18 @@ void BasicDispatchScheduler<TaskType>::DispatchMessage(const Message& msg) {
       case MSG_CPU_TIMER_EXPIRED:
         CpuTimerExpired(msg);
         break;
+      case MSG_CPU_AVAILABLE:
+        CpuAvailable(msg);
+        break;
+      case MSG_CPU_BUSY:
+        CpuBusy(msg);
+        break;
+      case MSG_CPU_AGENT_BLOCKED:
+        AgentBlocked(msg);
+        break;
+      case MSG_CPU_AGENT_WAKEUP:
+        AgentWakeup(msg);
+        break;
       default:
         GHOST_ERROR("Unhandled message type %d", msg.type());
         break;
@@ -525,6 +606,9 @@ void BasicDispatchScheduler<TaskType>::DispatchMessage(const Message& msg) {
       break;
     case MSG_TASK_AFFINITY_CHANGED:
       TaskAffinityChanged(task, msg);
+      break;
+    case MSG_TASK_PRIORITY_CHANGED:
+      TaskPriorityChanged(task, msg);
       break;
     case MSG_TASK_LATCHED:
       TaskLatched(task, msg);

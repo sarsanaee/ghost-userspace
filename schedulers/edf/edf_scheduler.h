@@ -8,6 +8,7 @@
 #define GHOST_SCHEDULERS_EDF_EDF_SCHEDULER_H_
 
 #include <cstdint>
+#include <memory>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/bind_front.h"
@@ -65,8 +66,7 @@ struct EdfTask : public Task<> {
 
   friend inline std::ostream& operator<<(std::ostream& os,
                                          EdfTask::RunState run_state) {
-    os << RunStateToString(run_state);
-    return os;
+    return os << RunStateToString(run_state);
   }
 
   RunState run_state = RunState::kBlocked;
@@ -262,6 +262,8 @@ class GlobalEdfAgent : public FullAgent<EnclaveType> {
   }
 
   ~GlobalEdfAgent() override {
+    this->enclave_.SetDeliverCpuAvailability(false);
+    this->enclave_.SetDeliverAgentRunnability(false);
     // Terminate global agent before satellites to avoid a false negative error
     // from ghost_run(). e.g. when the global agent tries to schedule on a CPU
     // without an active satellite agent.
@@ -284,8 +286,8 @@ class GlobalEdfAgent : public FullAgent<EnclaveType> {
   }
 
   std::unique_ptr<Agent> MakeAgent(const Cpu& cpu) override {
-    return absl::make_unique<GlobalSatAgent>(&this->enclave_, cpu,
-                                             global_scheduler_.get());
+    return std::make_unique<GlobalSatAgent>(&this->enclave_, cpu,
+                                            global_scheduler_.get());
   }
 
   void RpcHandler(int64_t req, const AgentRpcArgs& args,

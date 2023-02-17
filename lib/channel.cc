@@ -34,7 +34,7 @@ LocalChannel::LocalChannel(int elems, int node, CpuList cpulist)
   elems_ = header_->nelems;
 
   if (!cpulist.Empty()) {
-    CHECK_ZERO(GhostHelper()->ConfigQueueWakeup(fd_, cpulist, /*flags=*/0));
+    CHECK_EQ(GhostHelper()->ConfigQueueWakeup(fd_, cpulist, /*flags=*/0), 0);
   }
 };
 
@@ -105,12 +105,6 @@ absl::string_view Message::describe_type() const {
       return "MSG_TASK_PREEMPT";
     case MSG_TASK_YIELD:
       return "MSG_TASK_YIELD";
-    case MSG_CPU_TICK:
-      return "MSG_CPU_TICK";
-    case MSG_CPU_NOT_IDLE:
-      return "MSG_CPU_NOT_IDLE";
-    case MSG_CPU_TIMER_EXPIRED:
-      return "MSG_CPU_TIMER_EXPIRED";
     case MSG_TASK_DEPARTED:
       return "MSG_TASK_DEPARTED";
     case MSG_TASK_SWITCHTO:
@@ -119,6 +113,22 @@ absl::string_view Message::describe_type() const {
       return "MSG_TASK_AFFINITY_CHANGED";
     case MSG_TASK_LATCHED:
       return "MSG_TASK_LATCHED";
+    case MSG_TASK_PRIORITY_CHANGED:
+      return "MSG_TASK_PRIORITY_CHANGED";
+    case MSG_CPU_TICK:
+      return "MSG_CPU_TICK";
+    case MSG_CPU_TIMER_EXPIRED:
+      return "MSG_CPU_TIMER_EXPIRED";
+    case MSG_CPU_NOT_IDLE:
+      return "MSG_CPU_NOT_IDLE";
+    case MSG_CPU_AVAILABLE:
+      return "MSG_CPU_AVAILABLE";
+    case MSG_CPU_BUSY:
+      return "MSG_CPU_BUSY";
+    case MSG_CPU_AGENT_BLOCKED:
+      return "MSG_CPU_AGENT_BLOCKED";
+    case MSG_CPU_AGENT_WAKEUP:
+      return "MSG_CPU_AGENT_WAKEUP";
     default:
       GHOST_ERROR("Unknown message %d", type());
   }
@@ -188,6 +198,14 @@ std::string Message::stringify() const {
           static_cast<const ghost_msg_payload_task_departed*>(payload());
       absl::StrAppend(&result, " on cpu ", departed->cpu);
       if (departed->from_switchto) absl::StrAppend(&result, " (from_switchto)");
+      break;
+    }
+
+    case MSG_TASK_PRIORITY_CHANGED: {
+      const ghost_msg_payload_task_priority_changed* priority =
+          static_cast<const ghost_msg_payload_task_priority_changed*>(
+              payload());
+      absl::StrAppend(&result, " to nice ", priority->nice);
       break;
     }
 

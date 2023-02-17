@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -26,12 +27,16 @@
 #include "absl/debugging/symbolize.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
+#include "absl/time/time.h"
 #include "kernel/ghost_uapi.h"
 #include "lib/logging.h"
 
 // procfs may have been mounted somewhere other than root (eg. for testing
 // purposes).
 ABSL_FLAG(std::string, ghost_procfs_prefix, "", "procfs prefix");
+
+ABSL_FLAG(bool, emit_fork_warnings, true,
+          "Print info about multiple threads in ForkedProcess");
 
 namespace ghost {
 
@@ -291,6 +296,20 @@ void PrintBacktrace(FILE* f, void* uctx) {
   }
 }
 
+bool CapHas(cap_value_t cap) {
+  cap_t caps = cap_get_proc();
+  if (!caps) {
+    return false;
+  }
+  cap_flag_value_t set_or_clr;
+  int err = cap_get_flag(caps, cap, CAP_EFFECTIVE, &set_or_clr);
+  cap_free(caps);
+  if (err) {
+    return false;
+  }
+  return set_or_clr == CAP_SET;
+}
+
 void Exit(int code) {
   if (code != 0) {
     std::cerr << "PID " << Gtid::Current().tid() << " Backtrace:" << std::endl;
@@ -309,11 +328,17 @@ void SpinFor(absl::Duration remaining) {
   while (remaining > absl::ZeroDuration()) {
     // We use MonotonicNow instead of absl::Now(), since the latter can acquire
     // a lock and sleep.
-    absl::Time start = ghost::MonotonicNow();
+    absl::Time start = MonotonicNow();
     absl::Duration delta;
 
     for (int i = 0; i < 100; ++i) {
-      delta = ghost::MonotonicNow() - start;
+      delta = MonotonicNow() - start;
+
+      // If clock_gettime is slow, we don't want to mistake that for a
+      // preemption.
+      if (delta > absl::Microseconds(10)) {
+        break;
+      }
     }
 
     // Don't count preempted time; if we were off cpu, the large delta
@@ -373,10 +398,34 @@ void ForkedProcess::HandleSigchild(int signum) {
   }
 }
 
+void CheckForMultiThreaded(void) {
+  std::error_code ec;
+  auto f = std::filesystem::directory_iterator("/proc/self/task/", ec);
+  auto end = std::filesystem::directory_iterator();
+  std::string me = std::to_string(GetTID());
+  for ( ; !ec && f != end; f.increment(ec)) {
+    std::string tid = f->path().filename();
+    if (tid == me) {
+      continue;
+    }
+    std::ifstream ifs_comm((f->path() / "comm").string());
+    std::string comm;
+    std::getline(ifs_comm, comm);
+    absl::FPrintF(stderr, "Fork danger!  Found extra task %s %s\n", tid, comm);
+  }
+}
+
 ForkedProcess::ForkedProcess(int stderr_fd) {
   pid_t ppid = getpid();
-  pid_t p = fork();
+  pid_t p;
 
+  // Any extra threads that exist when making a ForkedProcess are potentially a
+  // risk: they will not be forked, and your application may depend on them.
+  if (absl::GetFlag(FLAGS_emit_fork_warnings)) {
+    CheckForMultiThreaded();
+  }
+
+  p = fork();
   CHECK_GE(p, 0);
 
   if (p == 0) {

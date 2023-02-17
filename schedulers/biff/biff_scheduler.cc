@@ -7,6 +7,7 @@
 #include "schedulers/biff/biff_scheduler.h"
 
 #include "absl/strings/str_format.h"
+#include "third_party/bpf/topology.bpf.h"
 #include "bpf/user/agent.h"
 #include <stdlib.h>
 
@@ -72,12 +73,13 @@ BiffScheduler::BiffScheduler(Enclave* enclave, CpuList cpulist,
   bpf_obj_ = biff_bpf__open();
   CHECK_NE(bpf_obj_, nullptr);
 
-  bpf_map__resize(bpf_obj_->maps.cpu_data, libbpf_num_possible_cpus());
-
   bpf_program__set_types(bpf_obj_->progs.biff_pnt,
                          BPF_PROG_TYPE_GHOST_SCHED, BPF_GHOST_SCHED_PNT);
   bpf_program__set_types(bpf_obj_->progs.biff_msg_send, BPF_PROG_TYPE_GHOST_MSG,
                          BPF_GHOST_MSG_SEND);
+
+  bpf_obj_->rodata->enable_bpf_printd = CapHas(CAP_PERFMON);
+  SetBpfTopologyVars(bpf_obj_->rodata, MachineTopology());
 
   CHECK_EQ(biff_bpf__load(bpf_obj_), 0);
 
@@ -93,6 +95,8 @@ BiffScheduler::BiffScheduler(Enclave* enclave, CpuList cpulist,
   bpf_sw_data_ = static_cast<struct biff_bpf_sw_data*>(
       bpf_map__mmap(bpf_obj_->maps.sw_data));
   CHECK_NE(bpf_sw_data_, MAP_FAILED);
+
+  enclave->SetDeliverCpuAvailability(true);
 }
 
 BiffScheduler::~BiffScheduler() {

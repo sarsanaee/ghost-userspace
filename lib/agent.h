@@ -17,12 +17,18 @@
 #include <atomic>
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <thread>
 
+#include "absl/base/optimization.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "lib/base.h"
 #include "lib/enclave.h"
 #include "lib/ghost.h"
 #include "lib/topology.h"
+#include "lib/trivial_status.h"
 #include "shared/shmem.h"
 
 namespace ghost {
@@ -134,7 +140,7 @@ class LocalAgent : public Agent {
 // Otherwise, it is not guaranteed that two arbitrary processes will be able
 // to serialize/deserialize the data in a consistent manner (for instance, due
 // to differences in struct padding, endianness, etc.).
-template <size_t BufferBytes = 1024 /* 1 KiB */>
+template <size_t BufferBytes = 16384 /* 16 KiB */>
 struct AgentRpcBuffer {
   // Converts the input to raw bytes and stores them in the internal data array.
   // Note that T shouldn't contain any pointers, since these pointers will not
@@ -143,41 +149,81 @@ struct AgentRpcBuffer {
   // of the type T. We have `size` as a parameter rather than use `sizeof(T)`
   // since `sizeof(T)` does not produce the correct size for array pointers.
   template <class T>
-  void Serialize(const T& t, size_t size) {
+  absl::Status Serialize(const T& t, size_t size) {
     static_assert(std::is_trivially_copyable<T>::value,
                   "Template type needs to be trivially copyable.");
     static_assert(!std::is_pointer<T>::value,
                   "Template type must not be a pointer.");
+    is_serialized = false;
+
     // Template type cannot be larger than the buffer.
-    CHECK_LE(size, BufferBytes);
+    if (ABSL_PREDICT_FALSE(size > BufferBytes)) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Serialize used with too large of a type: %zu", size));
+    }
 
     const std::byte* serialized =
         reinterpret_cast<const std::byte*>(&t);
     std::copy_n(serialized, size, std::begin(data));
+    is_serialized = true;
+    return absl::OkStatus();
   }
 
   template <class T>
-  void SerializeVector(const std::vector<T>& vt) {
+  absl::Status SerializeVector(const std::vector<T>& vt) {
     static_assert(std::is_trivially_copyable<T>::value,
                   "Template type needs to be trivially copyable.");
     static_assert(!std::is_pointer<T>::value,
                   "Template type must not be a pointer.");
+    is_serialized = false;
+
     // Template type cannot be larger than the buffer.
-    CHECK_LE(sizeof(T) * vt.size(), BufferBytes);
+    if (ABSL_PREDICT_FALSE(sizeof(T) * vt.size() > BufferBytes)) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "SerializeVector used with too large of a type: %zu items: %zu",
+          sizeof(T), vt.size()));
+    }
 
     for (size_t i = 0; i < vt.size(); i++) {
       const std::byte* serialized = reinterpret_cast<const std::byte*>(&vt[i]);
       std::copy_n(serialized, sizeof(T), std::begin(data) + (sizeof(T) * i));
     }
+    is_serialized = true;
+    return absl::OkStatus();
   }
 
-  void SerializeString(absl::string_view s) {
-    CHECK_LE(s.size(), BufferBytes - 1);
+  absl::Status SerializeString(absl::string_view s) {
+    is_serialized = false;
+
+    if (ABSL_PREDICT_FALSE(s.size() > BufferBytes - 1)) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "SerializeString used with too large of a string: %zu", s.size()));
+    }
+
     std::transform(s.begin(), s.end(), std::begin(data), [](char c) {
       return std::byte(c);
     });
     // null terminator
     data[s.size()] = std::byte(0);
+
+    // See DeserializeString().
+    string_length = s.size();
+
+    is_serialized = true;
+    return absl::OkStatus();
+  }
+
+  absl::Status SerializeStatus(const absl::Status& status) {
+    return Serialize<TrivialStatus>(TrivialStatus(status));
+  }
+
+  template <class T>
+  absl::Status SerializeStatusOr(const absl::StatusOr<T>& status_or) {
+    return Serialize<TrivialStatusOr<T>>(TrivialStatusOr<T>(status_or));
+  }
+
+  absl::Status SerializeStatusOrString(const absl::StatusOr<std::string>& s) {
+    return Serialize<TrivialStatusOrString>(TrivialStatusOrString(s));
   }
 
   // See comment above for `Serialize<T>(const T& t, size_t size)`. This
@@ -186,10 +232,10 @@ struct AgentRpcBuffer {
   // those cases, call `Serialize<T>(const T& t, size_t size)` above and pass
   // the size to the `size` parameter.
   template <class T>
-  void Serialize(const T& t) {
+  absl::Status Serialize(const T& t) {
     static_assert(sizeof(T) <= BufferBytes,
                   "Template type cannot be larger than the buffer.");
-    Serialize(t, sizeof(T));
+    return Serialize(t, sizeof(T));
   }
 
   // Converts the raw bytes in the internal data array to the given type.
@@ -198,26 +244,45 @@ struct AgentRpcBuffer {
   // as a parameter rather than use `sizeof(T)` since `sizeof(T)` does not
   // produce the correct size for array pointers.
   template <class T>
-  void Deserialize(T& t, size_t size) const {
+  absl::Status Deserialize(T& t, size_t size) const {
     static_assert(std::is_trivially_copyable<T>::value,
                   "Template type needs to be trivially copyable.");
     static_assert(!std::is_pointer<T>::value,
                   "Template type must not be a pointer.");
     // Template type cannot be larger than the buffer.
-    CHECK_LE(size, BufferBytes);
+    if (ABSL_PREDICT_FALSE(size > BufferBytes)) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Deserialize failed; too large of type: %zu", size));
+    }
+
+    if (!is_serialized) {
+      return absl::InvalidArgumentError(
+          "Calling deserialize without a successful serialize");
+    }
 
     std::byte* deserialized = reinterpret_cast<std::byte*>(&t);
     std::copy_n(std::begin(data), size, deserialized);
+
+    return absl::OkStatus();
   }
 
   template <class T>
-  std::vector<T> DeserializeVector(size_t num_elements) const {
+  absl::StatusOr<std::vector<T>> DeserializeVector(size_t num_elements) const {
     static_assert(std::is_trivially_copyable<T>::value,
                   "Template type needs to be trivially copyable.");
     static_assert(!std::is_pointer<T>::value,
                   "Template type must not be a pointer.");
     // Template type cannot be larger than the buffer.
-    CHECK_LE(sizeof(T) * num_elements, BufferBytes);
+    if (ABSL_PREDICT_FALSE(sizeof(T) * num_elements > BufferBytes)) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "DeserializeVector failed; too large of type: %zu items: %zu",
+          sizeof(T), num_elements));
+    }
+
+    if (!is_serialized) {
+      return absl::InvalidArgumentError(
+          "Calling deserialize without a successful serialize");
+    }
 
     // Note that this construct `num_elements` instance of `T` using the default
     // constructor for `T`.
@@ -235,16 +300,56 @@ struct AgentRpcBuffer {
   // `Deserialize<T>(size_t size)` above and pass the size to the `size`
   // parameter.
   template <class T>
-  T Deserialize() const {
+  absl::StatusOr<T> Deserialize() const {
     static_assert(sizeof(T) <= BufferBytes,
                   "Template type cannot be larger than the buffer.");
     T t;
-    Deserialize<T>(t, sizeof(T));
+    absl::Status status = Deserialize<T>(t, sizeof(T));
+    if (!status.ok()) {
+      return status;
+    }
     return t;
   }
 
-  std::string DeserializeString() const {
-    return std::string(reinterpret_cast<const char*>(&data[0]));
+  absl::StatusOr<std::string> DeserializeString() const {
+    // We need to use the cached string length, because it is possible that we
+    // have serialized a string that contains internal null bytes (for example,
+    // this occurs with a proto serialized as a string).
+    if (ABSL_PREDICT_FALSE(string_length > BufferBytes - 1)) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Deserialize using invalid string length: %zu", string_length));
+    }
+
+    if (!is_serialized) {
+      return absl::InvalidArgumentError(
+          "Calling deserialize without a successful serialize");
+    }
+
+    return std::string(reinterpret_cast<const char*>(&data[0]), string_length);
+  }
+
+  absl::StatusOr<TrivialStatus> DeserializeStatus() const {
+    return Deserialize<TrivialStatus>();
+  }
+
+  template <class T>
+  absl::StatusOr<absl::StatusOr<T>> DeserializeStatusOr() const {
+    absl::StatusOr<TrivialStatusOr<T>> deserialize_status =
+        Deserialize<TrivialStatusOr<T>>();
+    if (!deserialize_status.ok()) {
+      return deserialize_status.status();
+    }
+    return deserialize_status.value().ToStatusOr();
+  }
+
+  absl::StatusOr<absl::StatusOr<std::string>> DeserializeStatusOrString()
+      const {
+    absl::StatusOr<TrivialStatusOrString> deserialize_status =
+        Deserialize<TrivialStatusOrString>();
+    if (!deserialize_status.ok()) {
+      return deserialize_status.status();
+    }
+    return deserialize_status.value().ToStatusOr();
   }
 
   // This is a region where arbitrary bytes of data can be written (ie. when the
@@ -253,7 +358,11 @@ struct AgentRpcBuffer {
   // of typing this as a templated type, since a given agent might want
   // different RPCs to return different types of responses (all of which must
   // fit within the shared memory region).
-  std::array<std::byte, BufferBytes> data;
+  std::array<std::byte, BufferBytes> data = {};
+
+  // For internal use only.
+  size_t string_length = 0;
+  bool is_serialized = false;
 };
 
 // Encapsulation for any arguments that might need to be passed as part of an
@@ -269,6 +378,19 @@ struct AgentRpcArgs {
   // This buffer may be used to serialize arbitrary plain-old-data as part of
   // the RPC arguments.
   AgentRpcBuffer<> buffer;
+
+  bool operator==(const AgentRpcArgs& compare) const {
+    if (this->arg0 != compare.arg0) {
+      return false;
+    }
+    if (this->arg1 != compare.arg1) {
+      return false;
+    }
+    if (this->buffer.data != compare.buffer.data) {
+      return false;
+    }
+    return true;
+  }
 };
 
 // Encapsulates the response for an RPC.
@@ -309,6 +431,8 @@ class FullAgent {
 
   FullAgent(const FullAgent&) = delete;
   FullAgent& operator=(const FullAgent&) = delete;
+
+  EnclaveType enclave_;
 
  protected:
   // Makes an agent of a type specific to a derived FullAgent
@@ -360,7 +484,6 @@ class FullAgent {
     agents_.clear();
   }
 
-  EnclaveType enclave_;
   std::vector<std::unique_ptr<Agent>> agents_;
 };
 
@@ -448,9 +571,9 @@ class AgentProcess {
   // Note the forked child's 'main' thread, which is in CFS, will never leave
   // the constructor.  It will create its own agent tasks.
   explicit AgentProcess(AgentConfigType config) {
-    sb_ = absl::make_unique<SharedBlob>();
+    sb_ = std::make_unique<SharedBlob>();
 
-    agent_proc_ = absl::make_unique<ForkedProcess>(config.stderr_fd_);
+    agent_proc_ = std::make_unique<ForkedProcess>(config.stderr_fd_);
     if (!agent_proc_->IsChild()) {
       sb_->agent_ready_.WaitForNotification();
       return;
@@ -460,7 +583,7 @@ class AgentProcess {
       CHECK_EQ(mlockall(MCL_CURRENT | MCL_FUTURE), 0);
     }
 
-    full_agent_ = absl::make_unique<FullAgentType>(config);
+    full_agent_ = std::make_unique<FullAgentType>(config);
     CHECK_EQ(prctl(PR_SET_NAME, "ap_child"), 0);
 
     GhostSignals::IgnoreCommon();
@@ -477,8 +600,12 @@ class AgentProcess {
       for (;;) {
         sb_->rpc_pending_.WaitForNotification();
         sb_->rpc_pending_.Reset();
-        sb_->rpc_res_ = AgentRpcResponse();  // Reset the response.
-        full_agent_->RpcHandler(sb_->rpc_req_, sb_->rpc_args_, sb_->rpc_res_);
+        if (full_agent_->enclave_.IsOnline()) {
+          sb_->rpc_res_ = AgentRpcResponse();  // Reset the response.
+          full_agent_->RpcHandler(sb_->rpc_req_, sb_->rpc_args_, sb_->rpc_res_);
+        } else {
+          sb_->rpc_res_.response_code = -ENODEV;
+        }
         sb_->rpc_done_.Notify();
       }
     });
@@ -497,7 +624,7 @@ class AgentProcess {
     _exit(0);
   }
 
-  ~AgentProcess() {
+  virtual ~AgentProcess() {
     sb_->kill_agent_.Notify();
     agent_proc_->WaitForChildExit();
   }
@@ -522,8 +649,8 @@ class AgentProcess {
   // DISCLAIMER: This RPC mechanism is naturally only meant to be used for the
   // shared memory region on a single machine. See AgentRpcBuffer for more
   // details.
-  AgentRpcResponse RpcWithResponse(uint64_t req,
-                                   const AgentRpcArgs& args = AgentRpcArgs()) {
+  virtual AgentRpcResponse RpcWithResponse(
+      uint64_t req, const AgentRpcArgs& args = AgentRpcArgs()) {
     absl::MutexLock lock(&rpc_mutex_);
 
     PerformRpc(req, args);

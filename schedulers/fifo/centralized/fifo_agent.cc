@@ -21,12 +21,15 @@
 ABSL_FLAG(std::string, ghost_cpus, "1-5", "cpulist");
 ABSL_FLAG(int32_t, globalcpu, -1,
           "Global cpu. If -1, then defaults to the first cpu in <cpus>");
+ABSL_FLAG(absl::Duration, preemption_time_slice, absl::InfiniteDuration(),
+          "A task is preempted after running for this time slice (default = "
+          "infinite time slice)");
 
 namespace ghost {
 
 void ParseFifoConfig(FifoConfig* config) {
   CpuList ghost_cpus =
-      ghost::MachineTopology()->ParseCpuStr(absl::GetFlag(FLAGS_ghost_cpus));
+      MachineTopology()->ParseCpuStr(absl::GetFlag(FLAGS_ghost_cpus));
   // One CPU for the spinning global agent and at least one other for running
   // scheduled ghOSt tasks.
   CHECK_GE(ghost_cpus.Size(), 2);
@@ -46,6 +49,7 @@ void ParseFifoConfig(FifoConfig* config) {
   config->topology_ = topology;
   config->cpus_ = ghost_cpus;
   config->global_cpu_ = topology->cpu(globalcpu);
+  config->preemption_time_slice_ = absl::GetFlag(FLAGS_preemption_time_slice);
 }
 
 }  // namespace ghost

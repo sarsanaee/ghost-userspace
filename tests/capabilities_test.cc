@@ -7,14 +7,14 @@
 #include "tests/capabilities_test.h"
 
 #include <fstream>
+#include <memory>
 
+#include "bpf/user/agent.h"
+#include "bpf/user/test_bpf.skel.h"
 #include "kernel/ghost_uapi.h"
 #include "lib/agent.h"
 #include "lib/channel.h"
 #include "lib/ghost.h"
-
-#include "bpf/user/agent.h"
-#include "bpf/user/test_bpf.skel.h"
 
 // These tests check that ghOSt properly accepts/rejects syscalls based on the
 // capabilities that the calling thread holds.
@@ -99,8 +99,8 @@ TEST(CapabilitiesTest, AgentNice) {
     // computer must have at least one CPU.
     constexpr int kAgentCpu = 0;
     Topology* topology = MachineTopology();
-    auto enclave = absl::make_unique<LocalEnclave>(
-        AgentConfig(topology, topology->ToCpuList(std::vector<int>{kAgentCpu})));
+    auto enclave = std::make_unique<LocalEnclave>(AgentConfig(
+        topology, topology->ToCpuList(std::vector<int>{kAgentCpu})));
     LocalChannel default_channel(GHOST_MAX_QUEUE_ELEMS, /*node=*/0);
     default_channel.SetEnclaveDefault();
 
@@ -160,7 +160,9 @@ TEST(CapabilitiesTest, AgentNoNice) {
     // We do not need initialize an enclave, a channel, etc., for the agent
     // since the call below will fail before these are needed.
     EXPECT_THAT(
-        GhostHelper()->SchedAgentEnterGhost(enclave.GetCtlFd(), chan.GetFd()),
+        GhostHelper()->SchedAgentEnterGhost(enclave.GetCtlFd(),
+                                            MachineTopology()->cpu(0),
+                                            chan.GetFd()),
         Eq(-1));
     EXPECT_THAT(errno, Eq(EPERM));
   });

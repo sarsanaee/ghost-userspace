@@ -1,9 +1,9 @@
 #include <stdio.h>
 
+#include <atomic>
 #include <memory>
 #include <vector>
 
-#include "absl/synchronization/barrier.h"
 #include "lib/base.h"
 #include "lib/ghost.h"
 
@@ -61,16 +61,20 @@ void SimpleExpMany(int num_threads) {
 
 void SpinFor(absl::Duration d) {
   while (d > absl::ZeroDuration()) {
-    absl::Time a = ghost::MonotonicNow();
+    absl::Time a = MonotonicNow();
     absl::Time b;
 
     // Try to minimize the contribution of arithmetic/Now() overhead.
-    for (int i = 0; i < 150; i++) b = ghost::MonotonicNow();
+    for (int i = 0; i < 150; i++) {
+      b = MonotonicNow();
+    }
 
     absl::Duration t = b - a;
 
     // Don't count preempted time
-    if (t < absl::Microseconds(100)) d -= t;
+    if (t < absl::Microseconds(100)) {
+      d -= t;
+    }
   }
 }
 
@@ -128,24 +132,33 @@ void TaskDepartedMany(int num_threads) {
 void TaskDepartedManyRace(int num_threads) {
   constexpr size_t kNumIterations = 20;
   for (size_t i = 0; i < kNumIterations; i++) {
-    // +1 to account for this main thread.
-    absl::Barrier wait(/*num_threads=*/num_threads + 1);
+    std::atomic<int> num_threads_at_barrier{0};
+    Notification start;
     Notification exit;
     std::vector<std::unique_ptr<GhostThread>> threads;
 
     threads.reserve(num_threads);
     for (int j = 0; j < num_threads; j++) {
-      threads.emplace_back(
-          new GhostThread(GhostThread::KernelScheduler::kGhost, [&wait, &exit] {
-            wait.Block();
-            // Get the scheduler to open and commit txns frequently.
+      threads.emplace_back(new GhostThread(
+          GhostThread::KernelScheduler::kGhost,
+          [&num_threads_at_barrier, &start, &exit] {
+            num_threads_at_barrier.fetch_add(1, std::memory_order_relaxed);
+            start.WaitForNotification();
+
+            // Get the scheduler to open and commit txns
+            // frequently.
             while (!exit.HasBeenNotified()) {
               absl::SleepFor(absl::Nanoseconds(1));
             }
           }));
     }
 
-    wait.Block();
+    while (num_threads_at_barrier.load(std::memory_order_relaxed) <
+           num_threads) {
+      absl::SleepFor(absl::Milliseconds(1));
+    }
+    start.Notify();
+
     // Give the ghOSt threads time to wake up and the scheduler a moment to
     // start scheduling them.
     absl::SleepFor(absl::Milliseconds(10));

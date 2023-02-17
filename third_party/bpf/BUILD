@@ -13,6 +13,7 @@ licenses(["restricted"])
 
 exports_files([
     "biff_bpf.h",
+    "cfs_bpf.h",
     "common.bpf.h",
     "edf.h",
     "pntring.bpf.h",
@@ -20,6 +21,7 @@ exports_files([
     "schedfair.h",
     "schedlat.h",
     "schedrun.h",
+    "topology.bpf.h",
 ])
 
 bpf_program(
@@ -28,10 +30,23 @@ bpf_program(
     hdrs = [
         "biff_bpf.h",
         "common.bpf.h",
+        "topology.bpf.h",
         "//:kernel/vmlinux_ghost_5_11.h",
         "//third_party:iovisor_bcc/bits.bpf.h",
     ],
     bpf_object = "biff_bpf.o",
+)
+
+bpf_program(
+    name = "cfs_bpf",
+    src = "cfs.bpf.c",
+    hdrs = [
+        "cfs_bpf.h",
+        "common.bpf.h",
+        "//:kernel/vmlinux_ghost_5_11.h",
+        "//:lib/queue.bpf.h",
+    ],
+    bpf_object = "cfs_bpf.o",
 )
 
 bpf_program(
@@ -71,6 +86,7 @@ bpf_program(
     name = "schedghostidle_bpf",
     src = "schedghostidle.bpf.c",
     hdrs = [
+        "common.bpf.h",
         "//:kernel/vmlinux_ghost_5_11.h",
         "//third_party:iovisor_bcc/bits.bpf.h",
     ],

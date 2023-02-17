@@ -8,6 +8,7 @@
 #define GHOST_SCHEDULERS_FIFO_FIFO_SCHEDULER_H
 
 #include <deque>
+#include <memory>
 
 #include "lib/agent.h"
 #include "lib/scheduler.h"
@@ -99,8 +100,6 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
     return cs->run_queue.Empty();
   }
 
-  void ValidatePreExitState();
-
   void DumpState(const Cpu& cpu, int flags) final;
   std::atomic<bool> debug_runqueue_ = false;
 
@@ -178,12 +177,11 @@ class FullFifoAgent : public FullAgent<EnclaveType> {
   }
 
   ~FullFifoAgent() override {
-    scheduler_->ValidatePreExitState();
     this->TerminateAgentTasks();
   }
 
   std::unique_ptr<Agent> MakeAgent(const Cpu& cpu) override {
-    return absl::make_unique<FifoAgent>(&this->enclave_, cpu, scheduler_.get());
+    return std::make_unique<FifoAgent>(&this->enclave_, cpu, scheduler_.get());
   }
 
   void RpcHandler(int64_t req, const AgentRpcArgs& args,

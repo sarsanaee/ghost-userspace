@@ -21,7 +21,7 @@ namespace ghost_test {
 // exists because the ghOSt global agent has that role.
 //
 // Example:
-// Orchestrator::Options options;
+// Options options;
 // ... Fill in the options.
 // GhostOrchestrator orchestrator_(options);
 // (Constructs orchestrator with options.)
@@ -30,7 +30,7 @@ namespace ghost_test {
 // (Tells orchestrator to stop the experiment and print the results.)
 class GhostOrchestrator final : public Orchestrator {
  public:
-  explicit GhostOrchestrator(Orchestrator::Options opts);
+  explicit GhostOrchestrator(Options opts);
   ~GhostOrchestrator() final {}
 
   void Terminate() final;
@@ -60,11 +60,11 @@ class GhostOrchestrator final : public Orchestrator {
 
   // Returns true if RocksDB workers wait on a PrioTable.
   bool UsesPrioTable() const {
-    return options().ghost_wait_type == Orchestrator::GhostWaitType::kPrioTable;
+    return options().ghost_wait_type == GhostWaitType::kPrioTable;
   }
   // Returns true if RocksDB workers wait on futexes.
   bool UsesFutex() const {
-    return options().ghost_wait_type == Orchestrator::GhostWaitType::kFutex;
+    return options().ghost_wait_type == GhostWaitType::kFutex;
   }
 
   // Used by `GetIdleWorkerSIDs()`. Returns true if the idle worker with SID
@@ -75,7 +75,7 @@ class GhostOrchestrator final : public Orchestrator {
   // The load generator calls this method to populate 'idle_sids_' with a list
   // of the SIDs of idle workers. Note that this method clears 'idle_sids_'
   // before filling it in.
-  void GetIdleWorkerSIDs();
+  void GetIdleWorkerSIDs(uint32_t sid);
 
   // We do not need a different class of service (e.g., different expected
   // runtimes, different QoS (Quality-of-Service) classes, etc.) across workers
@@ -100,11 +100,11 @@ class GhostOrchestrator final : public Orchestrator {
   // thread sched items.
   ghost::Notification threads_ready_;
 
-  // The load generator uses this to store idle SIDs. We make this a class
+  // The load generators use this to store idle SIDs. We make this a class
   // member rather than a local variable in the 'LoadGenerator' method to avoid
-  // repeatedly allocating memory for the list backing in the load generator
+  // repeatedly allocating memory for the list backing in the load generators'
   // common case, which is expensive.
-  std::list<uint32_t> idle_sids_;
+  std::vector<std::vector<uint32_t>> idle_sids_;
 };
 
 }  // namespace ghost_test

@@ -98,7 +98,36 @@ with an individual target name, such as `agent_shinjuku`.
     `BUILD` files to compile the code.
 - `util/`
   -  Helper utilities for ghOSt. For example, `pushtosched` can be used to move
-     a batch of kernel threads to the ghOSt scheduling class.
+     a batch of kernel threads from the ghOSt scheduling class to
+     `CFS (SCHED_OTHER)`.
+
+---
+
+### Running the ghOSt Tests
+
+We include many different tests to ensure that both the ghOSt userspace code and
+the ghOSt kernel code are working correctly. Some of these tests are in `tests/`
+while others are in other subdirectories. To view all of the tests, run:
+```
+bazel query 'tests(//...)'
+```
+
+To build a test, such as `agent_test`, run:
+```
+bazel build -c opt agent_test
+```
+
+To run a test, launch the test binary directly:
+```
+bazel-bin/agent_test
+```
+
+Generally, Bazel encourages the use of `bazel test` when running tests. However,
+`bazel test` sandboxes the tests so that they have read-only access to `/sys`
+and are constrained in how long they can run for. However, the tests need write
+access to `/sys/fs/ghost` to coordinate with the kernel and may take a long time
+to complete. Thus, to avoid sandboxing, launch the test binaries directly (e.g.,
+`bazel-bin/agent_test`).
 
 ---
 
@@ -138,3 +167,60 @@ scheduler. When `simple_exp` has finished running all tests, it will exit.
 
 5. Use `Ctrl-C` to send a `SIGINT` signal to `fifo_per_cpu_agent` to get it to
 stop.
+
+---
+
+### Enclaves, Rebootless Upgrades, and Handling Scheduler Failures
+
+ghOSt uses **enclaves** to group agents and the threads that they are
+scheduling. An enclave contains a subset of CPUs (i.e., logical cores) in a
+machine, the agents that embody those CPUs, and the threads in the ghOSt
+scheduling class that the enclave agents can schedule onto the enclave CPUs. For
+example, in the `fifo_per_cpu_agent` example above, an enclave is created that
+contains CPUs 0 and 1, though the enclave can be configured to contain any
+subset of CPUs in the machine, and even all of them. In the `fifo_per_cpu_agent`
+example above, two per-CPU FIFO agents enter the enclave along with the
+`simple_exp` threads when the `simple_exp` process is started.
+
+Enclaves provide an easy way to partition the machine to support co-location of
+policies and tenants, a particularly important feature as machines scale out
+horizontally to contain hundreds of CPUs and new accelerators. Thus, multiple
+enclaves can be constructed with *disjoint* sets of CPUs.
+
+#### Rebootless Upgrades
+
+ghOSt supports rebootless upgrades of scheduling policies, using an enclave to
+encapsulate current thread and CPU state for a policy undergoing an upgrade.
+When you want to upgrade a policy, the agents in the new process that you launch
+attempt to attach to the existing enclave, waiting for the old agents running in
+the enclave to exit. Once the old agents exit, the new agents take over the
+enclave and begin scheduling.
+
+#### Handling Scheduler Failures
+
+ghOSt also recovers from scheduler failures (e.g., crashes, malfunctions, etc.)
+without triggering a kernel panic or machine reboot. To recover from a scheduler
+failure, you should generally destroy the failed scheduler's enclave and then
+launch the scheduler again. Destroying an enclave will kill the malfunctioning
+agents if necessary and will move the threads in the ghOSt scheduling class to
+CFS (Linux Completely Fair Scheduler) so that they can continue to be scheduled
+until you potentially pull them into ghOSt again.
+
+To see all enclaves that currently exist in ghOSt, use `ls` to list them via
+`ghostfs`:
+```
+$ ls /sys/fs/ghost
+ctl  enclave_1	version
+```
+
+To kill an enclave, such as `enclave_1` above, run the following command,
+replacing `enclave_1` with the name of the enclave:
+```
+echo destroy > /sys/fs/ghost/enclave_1/ctl
+```
+
+To kill all enclaves (which is generally useful in development), run the
+following command:
+```
+for i in /sys/fs/ghost/enclave_*/ctl; do echo destroy > $i; done
+```

@@ -6,6 +6,8 @@
 
 #include "schedulers/shinjuku/shinjuku_scheduler.h"
 
+#include <memory>
+
 #include "absl/strings/str_format.h"
 
 namespace ghost {
@@ -192,6 +194,10 @@ void ShinjukuScheduler::TaskRunnable(ShinjukuTask* task, const Message& msg) {
 }
 
 void ShinjukuScheduler::TaskDeparted(ShinjukuTask* task, const Message& msg) {
+  if (task->yielding()) {
+    Unyield(task);
+  }
+
   if (task->oncpu()) {
     CpuState* cs = cpu_state_of(task);
     CHECK_EQ(cs->current, task);
@@ -199,7 +205,7 @@ void ShinjukuScheduler::TaskDeparted(ShinjukuTask* task, const Message& msg) {
   } else if (task->queued()) {
     RemoveFromRunqueue(task);
   } else {
-    CHECK(task->blocked());
+    CHECK(task->blocked() || task->paused());
   }
 
   allocator()->FreeTask(task);
@@ -865,7 +871,7 @@ std::unique_ptr<ShinjukuScheduler> SingleThreadShinjukuScheduler(
     absl::Duration preemption_time_slice) {
   auto allocator =
       std::make_shared<SingleThreadMallocTaskAllocator<ShinjukuTask>>();
-  auto scheduler = absl::make_unique<ShinjukuScheduler>(
+  auto scheduler = std::make_unique<ShinjukuScheduler>(
       enclave, std::move(cpulist), std::move(allocator), global_cpu,
       preemption_time_slice);
   return scheduler;

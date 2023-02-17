@@ -198,6 +198,7 @@ int LocalEnclave::MakeNextEnclave() {
 // static
 int LocalEnclave::GetEnclaveDirectory(int ctl_fd) {
   CHECK_GE(ctl_fd, 0);
+  lseek(ctl_fd, 0, SEEK_SET);
   // 20 for the u64 in ascii, 2 for 0x, 1 for \0, 9 in case of a mistake.
   constexpr int kU64InAsciiBytes = 20 + 2 + 1 + 9;
   char buf[kU64InAsciiBytes] = {0};
@@ -218,6 +219,16 @@ void LocalEnclave::WriteEnclaveTunable(int dir_fd,
   CHECK_EQ(write(tunable_fd, tunable_value.data(), tunable_value.length()),
            tunable_value.length());
   close(tunable_fd);
+}
+
+// static
+std::string LocalEnclave::ReadEnclaveTunable(int dir_fd,
+                                             absl::string_view tunable_path) {
+  int tunable_fd = openat(dir_fd, std::string(tunable_path).c_str(), O_RDONLY);
+  CHECK_GE(tunable_fd, 0);
+  std::string val = ReadString(tunable_fd);
+  close(tunable_fd);
+  return val;
 }
 
 // static
@@ -365,7 +376,7 @@ void LocalEnclave::CommonInit() {
   CHECK_NE(data_region_, MAP_FAILED);
 
   GhostHelper()->SetGlobalStatusWordTable(
-      new LocalStatusWordTable(dir_fd_, 0, 0));
+      new LocalStatusWordTable(dir_fd_, /*id=*/0, config_.numa_node_));
 }
 
 // Initialize a CpuRep for each cpu in enclaves_cpus_ (aka, cpus()).
@@ -603,6 +614,10 @@ bool LocalEnclave::CompleteRunRequest(RunRequest* req) {
 
     // txn poisoned due to sync-commit failure.
     case GHOST_TXN_POISONED:
+      break;
+
+    // txn aborted.
+    case GHOST_TXN_ABORTED:
       break;
 
     // target already on cpu

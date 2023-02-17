@@ -21,13 +21,16 @@
 ABSL_FLAG(std::string, ghost_cpus, "1-5", "cpulist");
 ABSL_FLAG(int32_t, globalcpu, -1,
           "Global cpu. If -1, then defaults to the first cpu in <cpus>");
+ABSL_FLAG(absl::Duration, preemption_time_slice, absl::InfiniteDuration(),
+          "A task is preempted after running for this time slice (default = "
+          "infinite time slice)");
 
 namespace ghost {
 
 void ParseSolConfig(SolConfig* config) {
   int globalcpu = absl::GetFlag(FLAGS_globalcpu);
   CpuList ghost_cpus =
-      ghost::MachineTopology()->ParseCpuStr(absl::GetFlag(FLAGS_ghost_cpus));
+      MachineTopology()->ParseCpuStr(absl::GetFlag(FLAGS_ghost_cpus));
 
   CHECK_GT(ghost_cpus.Size(), 1);
 
@@ -41,6 +44,8 @@ void ParseSolConfig(SolConfig* config) {
   config->topology_ = topology;
   config->cpus_ = ghost_cpus;
   config->global_cpu_ = topology->cpu(globalcpu);
+  config->numa_node_ = ghost_cpus.Front().numa_node();
+  config->preemption_time_slice_ = absl::GetFlag(FLAGS_preemption_time_slice);
 }
 
 }  // namespace ghost
@@ -95,6 +100,7 @@ int main(int argc, char* argv[]) {
   // TODO: this is racy - uap could be deleted already
   ghost::GhostSignals::AddHandler(SIGUSR1, [uap](int) {
     uap->Rpc(ghost::SolScheduler::kDebugRunqueue);
+    uap->Rpc(ghost::SolScheduler::kDumpStats);
     return false;
   });
 

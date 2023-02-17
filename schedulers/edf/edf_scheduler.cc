@@ -6,6 +6,8 @@
 
 #include "schedulers/edf/edf_scheduler.h"
 
+#include <memory>
+
 #include "absl/strings/str_format.h"
 #include "bpf/user/agent.h"
 
@@ -70,7 +72,7 @@ EdfScheduler::EdfScheduler(Enclave* enclave, CpuList cpulist,
   bpf_obj_ = edf_bpf__open();
   CHECK_NE(bpf_obj_, nullptr);
 
-  bpf_map__resize(bpf_obj_->maps.cpu_data, libbpf_num_possible_cpus());
+  bpf_map__set_max_entries(bpf_obj_->maps.cpu_data, libbpf_num_possible_cpus());
 
   bpf_program__set_types(bpf_obj_->progs.edf_pnt,
                          BPF_PROG_TYPE_GHOST_SCHED, BPF_GHOST_SCHED_PNT);
@@ -95,6 +97,9 @@ EdfScheduler::EdfScheduler(Enclave* enclave, CpuList cpulist,
   bpf_data_ = static_cast<struct edf_bpf_per_cpu_data*>(
       bpf_map__mmap(bpf_obj_->maps.cpu_data));
   CHECK_NE(bpf_data_, MAP_FAILED);
+
+  // AGENT_BLOCKED and AGENT_WAKEUP are filtered by BPF.
+  enclave->SetDeliverAgentRunnability(true);
 }
 
 EdfScheduler::~EdfScheduler() {
@@ -163,7 +168,7 @@ void EdfScheduler::HandleNewGtid(EdfTask* task, pid_t tgid) {
   CHECK_GE(tgid, 0);
 
   if (orchs_.find(tgid) == orchs_.end()) {
-    auto orch = absl::make_unique<Orchestrator>();
+    auto orch = std::make_unique<Orchestrator>();
     if (!orch->Init(tgid)) {
       // If the task's group leader has already exited and closed the PrioTable
       // fd while we are handling TaskNew, it is possible that we cannot find
@@ -240,6 +245,10 @@ void EdfScheduler::TaskRunnable(EdfTask* task, const Message& msg) {
 }
 
 void EdfScheduler::TaskDeparted(EdfTask* task, const Message& msg) {
+  if (task->yielding()) {
+    Unyield(task);
+  }
+
   if (task->oncpu()) {
     CpuState* cs = cpu_state_of(task);
     CHECK_EQ(cs->current, task);
@@ -247,7 +256,7 @@ void EdfScheduler::TaskDeparted(EdfTask* task, const Message& msg) {
   } else if (task->queued()) {
     RemoveFromRunqueue(task);
   } else {
-    CHECK(task->blocked());
+    CHECK(task->blocked() || task->paused());
   }
 
   allocator()->FreeTask(task);
@@ -801,8 +810,8 @@ std::unique_ptr<EdfScheduler> SingleThreadEdfScheduler(Enclave* enclave,
                                                        CpuList cpulist,
                                                        GlobalConfig& config) {
   auto allocator = std::make_shared<SingleThreadMallocTaskAllocator<EdfTask>>();
-  auto scheduler = absl::make_unique<EdfScheduler>(
-      enclave, std::move(cpulist), std::move(allocator), config);
+  auto scheduler = std::make_unique<EdfScheduler>(enclave, std::move(cpulist),
+                                                  std::move(allocator), config);
   return scheduler;
 }
 

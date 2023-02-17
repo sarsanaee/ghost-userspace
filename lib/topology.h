@@ -83,9 +83,17 @@ class Cpu {
   bool operator!=(const Cpu& other) const { return !(*this == other); }
   bool operator<(const Cpu& other) const { return id() < other.id(); }
 
+  // Returns the CPU ID if the CPU is initialized. Otherwise, if the CPU is
+  // uninitialized, returns -1.
+  std::string ToString() const {
+    if (valid()) {
+      return std::to_string(id());
+    }
+    return std::to_string(-1);
+  }
+
   friend std::ostream& operator<<(std::ostream& os, const Cpu& cpu) {
-    os << cpu.id();
-    return os;
+    return os << cpu.ToString();
   }
 
  private:
@@ -434,8 +442,7 @@ class CpuList : public CpuMap {
 
   // Dumps the bitmap in hexadecimal, highest cpus to the left
   friend std::ostream& operator<<(std::ostream& os, const CpuList& clist) {
-    os << clist.CpuMaskStr();
-    return os;
+    return os << clist.CpuMaskStr();
   }
 
  private:
@@ -592,6 +599,10 @@ class Topology {
 
   // Returns the number of CPUs per physical core.
   uint32_t smt_count() const { return cpus_[0].siblings->Size(); }
+
+  // Returns the number of CCXs in this topology.
+  // TODO: compute this
+  uint32_t num_ccxs() const { return 0; }
 
   // Returns the number of numa nodes in this topology.
   uint32_t num_numa_nodes() const { return highest_node_idx_ + 1; }
