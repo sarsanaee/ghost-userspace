@@ -29,7 +29,7 @@ from experiments.scripts.options import GhostWaitType
 from experiments.scripts.run import Experiment
 from experiments.scripts.run import Run
 
-_NUM_CPUS = 2
+_NUM_CPUS = 3
 _NUM_CFS_WORKERS = _NUM_CPUS - 2
 _NUM_GHOST_WORKERS = 200 
 
